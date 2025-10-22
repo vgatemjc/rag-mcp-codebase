@@ -1,0 +1,19 @@
+    FROM python:3.11-slim
+    WORKDIR /app
+    RUN apt-get update && apt-get install -y git curl build-essential pkg-config \
+        python3-dev \
+        && rm -rf /var/lib/apt/lists/*
+
+
+    COPY requirements.txt /app/requirements.txt
+    RUN pip install --no-cache-dir -r requirements.txt
+    COPY . /app
+
+    # Set MCP transport to HTTP
+    ENV MCP_TRANSPORT=http
+    ENV MCP_HOST=0.0.0.0
+    ENV MCP_PORT=8083
+
+    # Run the MCP server using uv
+    CMD ["python", "mcp_server.py"]
+    

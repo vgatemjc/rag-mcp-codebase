@@ -1,0 +1,15 @@
+# 모든 파일과 디렉토리를 무시합니다.
+*
+
+# 1. 최상위 디렉토리를 추적합니다.
+!server/
+!script/
+
+!server/**
+!script/**
+server/__pycache__
+
+# 만약 루트에 특정 파일도 포함하고 싶다면:
+!/.env.example
+!/.gitignore
+!/docker-compose.yml

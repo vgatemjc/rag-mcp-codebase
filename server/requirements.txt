@@ -1,0 +1,18 @@
+fastapi==0.115.0
+uvicorn[standard]
+pydantic
+httpx==0.28.1
+qdrant-client==1.11.2
+numpy==1.26.4
+orjson==3.10.7
+python-dotenv==1.1.0
+regex==2024.9.11
+# tree-sitter
+tree_sitter==0.21.3
+tree_sitter_languages==1.10.2
+# MCP server SDK
+# mcp>=1.18.0,<2.0.0
+fastmcp==2.12.5
+# tokenization
+tiktoken==0.7.0
+

@@ -1,0 +1,22 @@
+chunk:
+tokens: 512
+overlap: 64
+code_splitters: ["function", "class", "block"]
+index:
+batch_size: 256
+upsert_parallelism: 4
+qdrant:
+code_collection: code_chunks
+func_collection: functions
+langs:
+- python
+- typescript
+- javascript
+- java
+- go
+- cpp
+- c
+- rs
+- kt
+- swift
+
