@@ -84,17 +84,20 @@ services:
       - mcp-server
     environment:
       QDRANT_URL: "http://127.0.0.1:6333"
-      TEI_URL: "http://127.0.0.1:80"
+      TEI_BASE_URL: "http://127.0.0.1:80"
+      TEI_MODEL: "nomic-ai/CodeRankEmbed"
       OLLAMA_URL: "http://127.0.0.1:11434"
+      DIM: "768"
     volumes:
       - ./server:/app
-      - /home/vgate/workspace/open_ai_gym/finding_food:/workspace/myrepo:ro
+      - /home/vgate/workspace/git_test:/workspace/myrepo:rw
+#      - /home/vgate/workspace/open_ai_gym/finding_food:/workspace/myrepo:rw
     command: >
       sh -c "
       echo '⏳ Waiting for TEI to be ready...' &&
       timeout 60s sh -c 'until curl -sf http://127.0.0.1:80/health; do sleep 2; done' &&
       echo '✅ TEI is ready, starting rag-server...' &&
-      uvicorn api:app --host 0.0.0.0 --port 8000
+      uvicorn git_rag_api:app --host 0.0.0.0 --port 8000
       "
 
   # --------------------------
