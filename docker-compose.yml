@@ -32,6 +32,7 @@ services:
       - HUGGING_FACE_HUB_ENABLE_HF_TRANSFER=1
       - MAX_CLIENT_BATCH_SIZE=64
       - MAX_CONCURRENT_REQUESTS=8
+      - PAYLOAD-LIMIT=100000000
     volumes:
       - ./model_cache:/data
 
@@ -62,11 +63,12 @@ services:
       echo '⏳ Waiting for TEI to be ready...' &&
       timeout 60s sh -c 'until curl -sf http://127.0.0.1:80/health; do sleep 2; done' &&
       echo '✅ TEI is ready, starting mcp-server...' &&
-      python mcp_server.py
+      python git_rag_mcp.py
       "
     volumes:
       - ./server:/app
-      - /home/vgate/workspace/open_ai_gym/finding_food:/workspace/myrepo:ro
+#      - /home/vgate/workspace/open_ai_gym/finding_food:/workspace/myrepo:ro
+      - /home/vgate/workspace/open_ai_gym:/workspace:rw
 
   # --------------------------
   # RAG Server - API 제공
@@ -90,13 +92,14 @@ services:
       DIM: "768"
     volumes:
       - ./server:/app
-      - /home/vgate/workspace/git_test:/workspace/myrepo:rw
-#      - /home/vgate/workspace/open_ai_gym/finding_food:/workspace/myrepo:rw
+#      - /home/vgate/workspace/git_test:/workspace/myrepo:rw
+      - /home/vgate/workspace/open_ai_gym:/workspace/myrepo:rw
     command: >
       sh -c "
       echo '⏳ Waiting for TEI to be ready...' &&
       timeout 60s sh -c 'until curl -sf http://127.0.0.1:80/health; do sleep 2; done' &&
       echo '✅ TEI is ready, starting rag-server...' &&
+      git config --global --add safe.directory /workspace/myrepo/finding_food/ &&
       uvicorn git_rag_api:app --host 0.0.0.0 --port 8000
       "
 

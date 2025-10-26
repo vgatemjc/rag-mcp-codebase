@@ -67,6 +67,9 @@ class Chunk:
         if self.neighbors is None:
             self.neighbors = []
 
+# TEI 서버의 최대 배치 크기 (로그에서 64로 확인됨)
+EMBEDDING_BATCH_SIZE = 1
+
 # ----------------------- embedding -----------------------
 class Embeddings:
     def __init__(self, base_url: str, model: str, api_key: str = ""):
@@ -75,13 +78,51 @@ class Embeddings:
         self.api_key = api_key
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        url = f"{self.base_url}/embeddings"
+        """
+        TEI 서버에 임베딩을 요청합니다. Payload Too Large 오류를 방지하기 위해 
+        요청을 작은 배치로 분할하여 순차적으로 전송합니다.
+        성공 코드를 분석하여 TEI 호출 규약을 /embed 및 "inputs" 키로 수정했습니다.
+        """
+        if not texts:
+            return []
+
+        all_embeddings = []
+        # 변경 1: 엔드포인트를 성공 코드와 동일하게 /embed로 수정
+        url = f"{self.base_url}/embed" 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        resp = requests.post(url, headers=headers, json={"model": self.model, "input": texts}, timeout=120)
-        resp.raise_for_status()
-        return [item["embedding"] for item in resp.json()["data"]]
+
+        # 텍스트 리스트를 지정된 배치 크기로 나눕니다.
+        for i in range(0, len(texts), EMBEDDING_BATCH_SIZE): # 클래스 변수 대신 전역 변수 EMBEDDING_BATCH_SIZE 사용
+            batch = texts[i:i + EMBEDDING_BATCH_SIZE]
+            
+            logger.info(f"Sending embedding request for batch {i} to {i + len(batch)}")
+
+            try:
+                # 변경 2 & 3: 페이로드 구조를 성공 코드와 동일하게 {"inputs": batch}로 수정.
+                # 'model' 필드는 제거하거나, TEI 서버에 필요한 경우 여기에 추가해야 합니다.
+                # 성공 코드에서는 'model'을 사용하지 않았으므로, 제거했습니다.
+                payload = {"inputs": batch} 
+                
+                resp = requests.post(url, headers=headers, json=payload, timeout=120)
+                resp.raise_for_status() # 4xx, 5xx 에러 처리
+                # TEI가 임베딩 리스트를 바로 반환한다고 가정
+                batch_embeddings = resp.json() 
+                all_embeddings.extend(batch_embeddings)
+                
+            except requests.exceptions.HTTPError as e:
+                # 413 오류 등 자세한 로그 유지
+                if resp.status_code == 413:
+                    logger.error(f"413 Payload Too Large error on batch {i}. Please check TEI server limit.")
+                else:
+                    logger.error(f"HTTP Error {resp.status_code} during embedding request: {e}")
+                raise
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request failed unexpectedly: {e}")
+                raise
+
+        return all_embeddings
 
 # ----------------------- qdrant store -----------------------
 class VectorStore:
@@ -304,7 +345,7 @@ class Chunker:
     # ----------------------- py_chunks 제거됨 -----------------------
 
     @staticmethod
-    def ts_chunks(src: str, path: str, repo: str, lang: str) -> List[Chunk]:
+    def ts_chunks(src: str, path: str, repo: str, lang: str, max_content_chars: int = 20000) -> List[Chunk]:
         if not _TS_AVAILABLE or lang not in _TS_NODE_TYPES:
             # 이 코드는 Chunker.chunks에서 이미 걸러지지만, 방어 코드로 유지
             return Chunker.generic_chunks(src, path, repo)
@@ -318,7 +359,9 @@ class Chunker:
         parser = Parser()
         parser.set_language(language)
         b = src.encode("utf-8")
-        
+
+        logger.info("ts chunk")
+
         try:
             tree = parser.parse(b)
             node_types = set(_TS_NODE_TYPES[lang])
@@ -331,6 +374,44 @@ class Chunker:
                 while p and p.type not in ("class_declaration", "impl_item", "trait_item", "struct_item", "enum_item", "function_definition", "class_definition"): 
                     p = p.parent
                 return p
+
+            def split_into_chunks(text: str, start_line: int, end_line: int, byte_start: int, byte_end: int, symbol: str, logical_id_base: str, sig_hash: str, block_id: str, block_range: Optional[Range], part_num: int = 1) -> List[Chunk]:
+                """긴 텍스트를 max_content_chars 단위로 분할하여 여러 Chunk 생성"""
+                chunks = []
+                current_pos = 0
+                while current_pos < len(text):
+                    split_end = min(current_pos + max_content_chars, len(text))
+                    # 줄 경계에서 자르기 위해 마지막 \n 찾기
+                    last_nl = text.rfind('\n', current_pos, split_end)
+                    if last_nl > current_pos:
+                        split_end = last_nl + 1
+                    sub_text = text[current_pos:split_end]
+                    
+                    # 위치 조정 (대략적; 정확한 byte/line 계산 필요 시 _line_to_byte 등 사용)
+                    sub_start_line = start_line + text[:current_pos].count('\n')
+                    sub_end_line = start_line + text[:split_end].count('\n')
+                    sub_byte_start = byte_start + current_pos
+                    sub_byte_end = byte_start + split_end
+                    
+                    part_symbol = f"{symbol}_part{part_num}"
+                    part_logical_id = f"{logical_id_base}_part{part_num}"
+                    part_content_hash = sha256(sub_text.encode())
+                    
+                    chunks.append(Chunk(
+                        logical_id=part_logical_id, symbol=part_symbol, path=path, language=lang,
+                        range=Range(sub_start_line, sub_end_line, sub_byte_start, sub_byte_end),
+                        content=sub_text,
+                        content_hash=part_content_hash, sig_hash=sig_hash,
+                        block_id=block_id, block_range=block_range,
+                    ))
+                    
+                    current_pos = split_end
+                    part_num += 1
+                
+                if len(chunks) > 1:
+                    logger.warning(f"Split {path}:{start_line}-{end_line} into {len(chunks)} chunks due to length limit")
+                
+                return chunks
 
             def walk(n):
                 # ... (기존 walk 로직 유지) ...
@@ -360,11 +441,20 @@ class Chunker:
                         bname = _ts_first_identifier(blk, b) or blk.type
                         block_id = f"block:{blk.type}:{bname}"
                         block_range = Range(bstart, bend, b_beg, b_end)
-                    out.append(Chunk(
-                        logical_id=logical_id, symbol=symbol, path=path, language=lang,
-                        range=Range(start_line, end_line, byte_start, byte_end), content=text,
-                        content_hash=content_hash, sig_hash=sig_hash, block_id=block_id, block_range=block_range,
-                    ))
+                    
+                    # 길이 제한 체크 및 분할
+                    if len(text) > max_content_chars:
+                        logger.info(f"ts text split chunk : {len(text)}")
+                        out.extend(split_into_chunks(
+                            text, start_line, end_line, byte_start, byte_end,
+                            symbol, logical_id, sig_hash, block_id, block_range
+                        ))
+                    else:
+                        out.append(Chunk(
+                            logical_id=logical_id, symbol=symbol, path=path, language=lang,
+                            range=Range(start_line, end_line, byte_start, byte_end), content=text,
+                            content_hash=content_hash, sig_hash=sig_hash, block_id=block_id, block_range=block_range,
+                        ))
                 for i in range(n.child_count):
                     walk(n.children[i])
             walk(tree.root_node)
@@ -374,14 +464,53 @@ class Chunker:
             # Tree-sitter 자체 오류(예: 메모리 문제, I/O)만 여기서 처리하고 폴백
             logger.error(f"Tree-sitter catastrophic error for {path}: {e}")
             return Chunker.generic_chunks(src, path, repo)
-
+            
     @staticmethod
-    def generic_chunks(src: str, path: str, repo: str, lines_per_chunk: int = 120) -> List[Chunk]:
+    def generic_chunks(src: str, path: str, repo: str, lines_per_chunk: int = 120, max_content_chars: int = 7000) -> List[Chunk]:
         out = []
         lines = src.splitlines(True)
         i = 0
         line_no = 1
         joined = ''.join(lines)
+
+        def split_into_chunks(text: str, start_line: int, end_line: int, byte_start: int, byte_end: int, symbol: str, logical_id_base: str, sig_hash: str, block_id: Optional[str] = None, block_range: Optional[Range] = None, part_num: int = 1) -> List[Chunk]:
+            """긴 텍스트를 max_content_chars 단위로 분할하여 여러 Chunk 생성"""
+            chunks = []
+            current_pos = 0
+            while current_pos < len(text):
+                split_end = min(current_pos + max_content_chars, len(text))
+                # 줄 경계에서 자르기 위해 마지막 \n 찾기
+                last_nl = text.rfind('\n', current_pos, split_end)
+                if last_nl > current_pos:
+                    split_end = last_nl + 1
+                sub_text = text[current_pos:split_end]
+                
+                # 위치 조정
+                sub_start_line = start_line + text[:current_pos].count('\n')
+                sub_end_line = start_line + text[:split_end].count('\n')
+                sub_byte_start = byte_start + current_pos
+                sub_byte_end = byte_start + split_end
+                
+                part_symbol = f"{symbol}_part{part_num}"
+                part_logical_id = f"{logical_id_base}_part{part_num}"
+                part_content_hash = sha256(sub_text.encode())
+                
+                chunks.append(Chunk(
+                    logical_id=part_logical_id, symbol=part_symbol, path=path, language="generic",
+                    range=Range(sub_start_line, sub_end_line, sub_byte_start, sub_byte_end),
+                    content=sub_text,
+                    content_hash=part_content_hash, sig_hash=sig_hash,
+                    block_id=block_id, block_range=block_range,
+                ))
+                
+                current_pos = split_end
+                part_num += 1
+            
+            if len(chunks) > 1:
+                logger.warning(f"Split {path}:{start_line}-{end_line} into {len(chunks)} chunks due to length limit")
+            
+            return chunks
+
         while i < len(lines):
             segment = lines[i:i + lines_per_chunk]
             text = ''.join(segment)
@@ -391,21 +520,25 @@ class Chunker:
             byte_end = _line_to_byte(joined, end + 1)
             symbol = f"range:{start:04d}-{end:04d}"
             logical_id = f"{repo}:{path}#{symbol}"
-            out.append(Chunk(
-                logical_id=logical_id, symbol=symbol, path=path, language="generic",
-                range=Range(start, end, byte_start, byte_end), content=text,
-                content_hash=sha256(text.encode()), sig_hash=sha256(symbol.encode()),
-            ))
+            sig_hash = sha256(symbol.encode())
+            
+            # 길이 제한 체크 및 분할
+            if len(text) > max_content_chars:
+                logger.info(f"gen split chunk : {len(text)}")
+                out.extend(split_into_chunks(
+                    text, start, end, byte_start, byte_end,
+                    symbol, logical_id, sig_hash
+                ))
+            else:
+                content_hash = sha256(text.encode())
+                out.append(Chunk(
+                    logical_id=logical_id, symbol=symbol, path=path, language="generic",
+                    range=Range(start, end, byte_start, byte_end), content=text,
+                    content_hash=content_hash, sig_hash=sig_hash,
+                ))
             i += lines_per_chunk
             line_no += len(segment)
         return out
-
-    @staticmethod
-    def chunks(src: str, path: str, repo: str) -> List[Chunk]:
-        lang = Chunker.for_language(path)
-        if lang in _TS_NODE_TYPES:
-            return Chunker.ts_chunks(src, path, repo, lang)
-        return Chunker.generic_chunks(src, path, repo)
 
 # ----------------------- relocalizer -----------------------
 class Relocalizer:
@@ -458,7 +591,7 @@ class Indexer:
         to_embed = []
         for path in files:
             head_src = self.git.show_file(head, path) or ""
-            logger.info(f"full index head src {head_src}")
+            logger.debug(f"full index head src {head_src}")
             if head_src:
                 to_embed.extend(Chunker.chunks(head_src, path, self.repo_name))
         if to_embed:
@@ -519,7 +652,7 @@ class Indexer:
             # 로컬 모드에서는 head_src를 파일 시스템에서 읽어옵니다.
             # 커밋 모드에서는 git.show_file(head, ...)를 사용합니다.
             head_src = self.git.show_file(head, fd.path) or ""
-            logger.info(f"index commit : head_src {head_src}")
+            logger.debug(f"index commit : head_src {head_src}")
             
             if not head_src:
                 continue
@@ -533,7 +666,7 @@ class Indexer:
                 continue
 
             base_src = self.git.show_file(base, fd.path) or ""
-            logger.info(f"index commit : base_src {base_src}")
+            logger.debug(f"index commit : base_src {base_src}")
             to_embed = []
             to_update_only_pos = []
             for _, ch in head_chunks.items():
