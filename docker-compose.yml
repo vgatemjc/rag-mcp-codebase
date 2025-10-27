@@ -11,30 +11,54 @@ services:
     volumes:
       - ./rag-db:/qdrant/storage
 
-  # --------------------------
-  # TEI - Embedding 서버
-  # --------------------------
-  tei:
-    image: ghcr.io/huggingface/text-embeddings-inference:86-1.8
-    container_name: tei
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
     restart: unless-stopped
     network_mode: "host"
+    ipc: host
     deploy:
       resources:
         reservations:
           devices:
             - capabilities: [gpu]
     environment:
-#      - MODEL_ID=BAAI/bge-m3
-      - MODEL_ID=nomic-ai/CodeRankEmbed
-#      - MODEL_ID=nomic-ai/nomic-embed-code
-      - DTYPE=float16
       - HUGGING_FACE_HUB_ENABLE_HF_TRANSFER=1
-      - MAX_CLIENT_BATCH_SIZE=64
-      - MAX_CONCURRENT_REQUESTS=8
-      - PAYLOAD-LIMIT=100000000
+    command: >-
+      --model nomic-ai/nomic-embed-code
+      --dtype float16
+      --quantization bitsandbytes
+      --task embedding
+      --max-model-len 8192
+      --gpu-memory-utilization 0.9
+      --max-num-seqs 64
     volumes:
-      - ./model_cache:/data
+      - ./model_cache:/root/.cache/huggingface
+
+  # --------------------------
+  # TEI - Embedding 서버
+  # --------------------------
+#   tei:
+#     image: ghcr.io/huggingface/text-embeddings-inference:86-1.8
+#     container_name: tei
+#     restart: unless-stopped
+#     network_mode: "host"
+#     deploy:
+#       resources:
+#         reservations:
+#           devices:
+#             - capabilities: [gpu]
+#     environment:
+# #      - MODEL_ID=BAAI/bge-m3
+#       - MODEL_ID=nomic-ai/CodeRankEmbed
+# #      - MODEL_ID=nomic-ai/nomic-embed-code
+#       - DTYPE=float16
+#       - HUGGING_FACE_HUB_ENABLE_HF_TRANSFER=1
+#       - MAX_CLIENT_BATCH_SIZE=64
+#       - MAX_CONCURRENT_REQUESTS=8
+#       - PAYLOAD-LIMIT=100000000
+#     volumes:
+#       - ./model_cache:/data
 
   # --------------------------
   # MCP Server - Custom RAG 전처리
@@ -48,7 +72,8 @@ services:
     network_mode: "host"
     depends_on:
       - qdrant
-      - tei
+      - vllm
+      - rag-server
     environment:
       QDRANT_URL: "http://127.0.0.1:6333"
       TEI_URL: "http://127.0.0.1:80"
@@ -82,8 +107,7 @@ services:
     network_mode: "host"
     depends_on:
       - qdrant
-      - tei
-      - mcp-server
+      - vllm
     environment:
       QDRANT_URL: "http://127.0.0.1:6333"
       TEI_BASE_URL: "http://127.0.0.1:80"
@@ -113,7 +137,7 @@ services:
     network_mode: "host"
     depends_on:
       - qdrant
-      - tei
+      - vllm
       - rag-server
     environment:
       OLLAMA_BASE_URL: http://127.0.0.1:11434  # Ollama URL (TEI 대체 가능)
@@ -121,10 +145,10 @@ services:
       QDRANT_URI: http://127.0.0.1:6333
       ENABLE_MCP: true
       ENABLE_RAG: true
-      EMBEDDING_ENGINE: tei
-      RAG_EMBEDDING_ENGINE: tei
+      EMBEDDING_ENGINE: vllm
+      RAG_EMBEDDING_ENGINE: vllm
       TEI_URL: http://127.0.0.1:80  # 호스트에서 TEI 접근 시
-      RAG_EMBEDDING_MODEL: BAAI/bge-m3
+      RAG_EMBEDDING_MODEL: nomic-ai/nomic-embed-code
       RAG_EMBEDDING_API_BASE: http://127.0.0.1:80
 #      RAG_EMBEDDING_DIM: 1024
       WEBUI_AUTH: "false"

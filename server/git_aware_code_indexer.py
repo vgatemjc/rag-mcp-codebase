@@ -9,6 +9,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict, Any
 import uuid
+from openai import OpenAI
 
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import PointStruct, Filter, FieldCondition, MatchValue
@@ -68,58 +69,50 @@ class Chunk:
             self.neighbors = []
 
 # TEI 서버의 최대 배치 크기 (로그에서 64로 확인됨)
-EMBEDDING_BATCH_SIZE = 1
+EMBEDDING_BATCH_SIZE = 32
 
-# ----------------------- embedding -----------------------
 class Embeddings:
     def __init__(self, base_url: str, model: str, api_key: str = ""):
-        self.base_url = base_url.rstrip("/")
+        """
+        Initializes an Embeddings client using the OpenAI SDK, pointed at a TEI server
+        with OpenAI compatibility enabled.
+        """
+        self.base_url = base_url.rstrip("/") + "/v1"  # Ensure OpenAI-compatible base path
         self.model = model
         self.api_key = api_key
+        self.client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key if self.api_key else "unused",  # TEI may not require it; set to dummy if empty
+            timeout=120.0
+        )
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         """
-        TEI 서버에 임베딩을 요청합니다. Payload Too Large 오류를 방지하기 위해 
-        요청을 작은 배치로 분할하여 순차적으로 전송합니다.
-        성공 코드를 분석하여 TEI 호출 규약을 /embed 및 "inputs" 키로 수정했습니다.
+        Embeds texts using the OpenAI SDK against a TEI server.
+        Batches requests to avoid payload size limits.
+        Returns a flat list of embedding vectors.
         """
         if not texts:
             return []
 
         all_embeddings = []
-        # 변경 1: 엔드포인트를 성공 코드와 동일하게 /embed로 수정
-        url = f"{self.base_url}/embed" 
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
-        # 텍스트 리스트를 지정된 배치 크기로 나눕니다.
-        for i in range(0, len(texts), EMBEDDING_BATCH_SIZE): # 클래스 변수 대신 전역 변수 EMBEDDING_BATCH_SIZE 사용
+        for i in range(0, len(texts), EMBEDDING_BATCH_SIZE):
             batch = texts[i:i + EMBEDDING_BATCH_SIZE]
             
             logger.info(f"Sending embedding request for batch {i} to {i + len(batch)}")
 
             try:
-                # 변경 2 & 3: 페이로드 구조를 성공 코드와 동일하게 {"inputs": batch}로 수정.
-                # 'model' 필드는 제거하거나, TEI 서버에 필요한 경우 여기에 추가해야 합니다.
-                # 성공 코드에서는 'model'을 사용하지 않았으므로, 제거했습니다.
-                payload = {"inputs": batch} 
-                
-                resp = requests.post(url, headers=headers, json=payload, timeout=120)
-                resp.raise_for_status() # 4xx, 5xx 에러 처리
-                # TEI가 임베딩 리스트를 바로 반환한다고 가정
-                batch_embeddings = resp.json() 
+                response = self.client.embeddings.create(
+                    input=batch,
+                    model=self.model
+                )
+                # Extract embeddings from the response
+                batch_embeddings = [item.embedding for item in response.data]
                 all_embeddings.extend(batch_embeddings)
                 
-            except requests.exceptions.HTTPError as e:
-                # 413 오류 등 자세한 로그 유지
-                if resp.status_code == 413:
-                    logger.error(f"413 Payload Too Large error on batch {i}. Please check TEI server limit.")
-                else:
-                    logger.error(f"HTTP Error {resp.status_code} during embedding request: {e}")
-                raise
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Request failed unexpectedly: {e}")
+            except Exception as e:  # Catch OpenAI SDK errors (e.g., APIError, Timeout)
+                logger.error(f"Error during embedding request for batch {i}: {e}")
+                # Re-raise to propagate the error
                 raise
 
         return all_embeddings
