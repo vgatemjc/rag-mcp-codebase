@@ -39,18 +39,18 @@ class Config:
     ENV: str = os.getenv("APP_ENV", "dev")
     QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
     QDRANT_API_KEY: str = os.getenv("QDRANT_API_KEY", "")
-    TEI_BASE_URL: str = os.getenv("TEI_BASE_URL", "http://localhost:8080/v1")
-    TEI_MODEL: str = os.getenv("TEI_MODEL", "text-embedding-3-large")
+    EMB_BASE_URL: str = os.getenv("EMB_BASE_URL", "http://localhost:8080/v1")
+    EMB_MODEL: str = os.getenv("EMB_MODEL", "text-embedding-3-large")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     DIM: Optional[int] = int(os.getenv("DIM", "0")) or None
     BRANCH: str = "main"
 
 config = Config()
-modelslug = re.sub(r"[^a-z0-9]+", "", config.TEI_MODEL.lower())
+modelslug = re.sub(r"[^a-z0-9]+", "", config.EMB_MODEL.lower())
 config.COLLECTION = f"git_rag-{config.ENV}-{modelslug}"
 
 # Global instances
-emb = Embeddings(base_url=config.TEI_BASE_URL, model=config.TEI_MODEL, api_key=config.OPENAI_API_KEY)
+emb = Embeddings(base_url=config.EMB_BASE_URL, model=config.EMB_MODEL, api_key=config.OPENAI_API_KEY)
 store = VectorStore(collection=config.COLLECTION, url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, dim=config.DIM)  # Re-init with new collection
 
 # State management
