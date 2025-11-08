@@ -25,19 +25,44 @@ def run_git(*args):
         check=True
     ).stdout.strip()
 
+# test_git_rag_api.py 내 api_call 함수 수정
 def api_call(method, endpoint, json_data=None):
-    """API 호출을 처리하고 응답을 반환합니다."""
+    """API 호출을 처리하고 응답을 반환합니다. 스트리밍 응답을 처리하여 최종 결과를 반환합니다."""
     url = f"{API_BASE_URL}{endpoint}"
     print(f"\n[API 호출] {method} {url}")
     try:
         if method == "POST":
-            response = requests.post(url, json=json_data, timeout=10)
+            response = requests.post(url, json=json_data, timeout=30) # 인덱싱은 시간이 더 걸릴 수 있으므로 타임아웃 증가
         elif method == "GET":
             response = requests.get(url, timeout=10)
         else:
             raise ValueError("지원되지 않는 메소드")
             
         response.raise_for_status()
+
+        # 인덱싱 엔드포인트에 대한 특별 처리: StreamingResponse를 파싱
+        if "/index/" in endpoint:
+            # 스트리밍 응답의 마지막 라인을 찾습니다.
+            last_line = ""
+            for line in response.iter_lines():
+                if line:
+                    last_line = line.decode('utf-8')
+                    # 처리 중인 상태도 출력하여 디버깅에 도움
+                    try:
+                        progress = json.loads(last_line)
+                        if progress['status'] in ('started', 'processing'):
+                             print(f"... Indexing: {progress.get('message')}")
+                    except json.JSONDecodeError:
+                        pass # JSON이 아닌 라인은 무시
+
+            if not last_line:
+                raise Exception("API 응답에서 스트리밍 결과가 반환되지 않았습니다.")
+            
+            print(f"streaming response ok : {json.loads(last_line)}")
+            # 최종 결과를 JSON으로 파싱하여 반환합니다.
+            return json.loads(last_line)
+        
+        # 일반 엔드포인트는 기존대로 JSON을 반환합니다.
         return response.json()
     except requests.exceptions.HTTPError as e:
         print(f"API 호출 실패: HTTP Error {e.response.status_code}")
@@ -86,7 +111,7 @@ def test_full_index():
     
     # 2A. 초기 전체 인덱싱
     result = api_call("POST", f"/repos/{REPO_ID}/index/full")
-    assert result['status'] == 'success', "Full index 실패"
+    assert result['status'] == 'completed', "Full index 실패 (status: " + result['status'] + ")"
     assert result['last_commit'] == INITIAL_COMMIT, "Last commit 불일치"
     
     # 상태 파일 확인
@@ -127,7 +152,7 @@ def test_commit_update_index():
 
     # 3B. 증분 인덱싱 (커밋)
     result = api_call("POST", f"/repos/{REPO_ID}/index/update")
-    assert result['status'] == 'success', "Commit update index 실패"
+    assert result['status'] == 'completed', "Commit update index 실패 (status: " + result['status'] + ")"
     assert result['last_commit'] == NEW_COMMIT, "Last commit 불일치"
     print("Commit Update Index 성공.")
 
@@ -141,7 +166,7 @@ def test_commit_update_index():
     # 3D. 검증: No changes between commits
     # 같은 커밋으로 다시 실행 시 noop이 나와야 함 (수정된 인덱서 로직에 의해)
     result = api_call("POST", f"/repos/{REPO_ID}/index/update")
-    assert result['status'] == 'noop', "No-change update index (commit) 실패"
+    assert result['status'] == 'noop', "No-change update index (commit) 실패 (status: " + result['status'] + ")"
     print("Commit Noop 테스트 성공.")
 
 def test_local_update_index():
@@ -159,7 +184,7 @@ def test_local_update_index():
     # 4C. 증분 인덱싱 (로컬 모드)
     # base == head (NEW_COMMIT) 상태에서 호출
     result = api_call("POST", f"/repos/{REPO_ID}/index/update")
-    assert result['status'] == 'success', "Local update index 실패"
+    assert result['status'] == 'completed', "Local update index 실패 (status: " + result['status'] + ")"
     assert result['last_commit'] == NEW_COMMIT, "Last commit은 변경되지 않아야 함"
     print("Local Update Index 성공.")
 
@@ -175,7 +200,7 @@ def test_local_update_index():
     assert "file_b.py" not in status_result['modified'], "로컬 변경사항 되돌리기 실패"
 
     result = api_call("POST", f"/repos/{REPO_ID}/index/update")
-    assert result['status'] == 'noop', "Local Noop 테스트 실패"
+    assert result['status'] == 'noop', "Local Noop 테스트 실패 (status: " + result['status'] + ")"
     print("Local Noop 테스트 성공.")
 
 

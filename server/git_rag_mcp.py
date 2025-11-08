@@ -48,11 +48,31 @@ mcp = FastMCP("rag-mcp")
 
 @mcp.tool()
 async def search_code(query: str, k: int = 8, repo: str | None = None):
-    """Searches the entire codebase for the 'k' most semantically similar code snippets to the given query.
-    
-    The result is returned as a list of text strings, including the code's location information (e.g., 'repo/path#symbol:start-end'), similarity score, symbol, and the actual code snippet (chunk content).
-    The search scope can be narrowed by specifying a particular 'repo'.
-    This tool is used to identify the approximate location of relevant code.
+    """
+    Search the codebase for the *k* most semantically relevant snippets that match
+    the given `query`. The request is forwarded to the RAG service and each result
+    contains:
+
+      * A location string (``repo/path#symbol:start-end``)
+      * The matched symbol name
+      * A similarity score
+      * The snippet text (either from the RAG payload or read directly from disk)
+
+    Parameters
+    ----------
+    query : str
+        Text describing what you’re looking for.
+    k : int, optional
+        Number of top results to return (default 8).
+    repo : str | None, optional
+        Restrict the search to a particular repository ID. If omitted,
+        all repositories indexed by the RAG server are searched.
+
+    Returns
+    -------
+    TextContent
+        A formatted string containing one block per result, suitable for
+        display or further processing by the LLM.
     """
     logger.info(f"called search_code : {query}")
     try:
@@ -102,9 +122,22 @@ async def search_code(query: str, k: int = 8, repo: str | None = None):
 
 @mcp.tool()
 async def list_functions(repo: str):
-    """Returns a list of all top-level functions and class methods contained within the specified repository ('repo').
-    
-    The result is a list of text strings including the file location (e.g., 'file:start-end') and the name of each function.
+    """
+    Retrieve a plain‑text list of every top‑level function and class method
+    defined in the specified `repo`. The search uses a generic function‑
+    detection query and returns entries in the form:
+
+        path:start-end  function_or_class_name
+
+    Parameters
+    ----------
+    repo : str
+        Repository ID to scan.
+
+    Returns
+    -------
+    TextContent
+        One line per symbol, sorted by file and line numbers.
     """
     logger.info(f"called list_functions : {repo}")
     try:
@@ -139,9 +172,26 @@ async def list_functions(repo: str):
 
 @mcp.tool()
 async def retrieve_snippet(repo: str, file: str, start: int, end: int):
-    """Retrieves and returns the exact code content as text, spanning from the 'start' line to the 'end' line within a specific file ('file') of the given repository ('repo').
-    
-    This tool is used to convert location information obtained from 'search_code' or 'list_functions' into the concrete code content.
+    """
+    Pull the exact source code from `file` in `repo` between line `start`
+    and line `end` (inclusive). Lines are 1‑based and the function
+    silently truncates if the file or range does not exist.
+
+    Parameters
+    ----------
+    repo : str
+        Repository ID where the file resides.
+    file : str
+        Path to the file relative to the repository root.
+    start : int
+        1‑based starting line number.
+    end : int
+        1‑based ending line number.
+
+    Returns
+    -------
+    TextContent
+        The raw snippet text or an error message.
     """
     logger.info(f"called retrieve_snippet : {repo} {file} {start}-{end}")
     try:
@@ -159,10 +209,30 @@ async def retrieve_snippet(repo: str, file: str, start: int, end: int):
 
 @mcp.tool()
 async def analyze_issue(question: str, repo: str | None = None, k: int = 16):
-    """Searches for the 'k' most relevant code regions that might be the source of a problem, based on an issue description or bug report ('question').
-    
-    The result is returned as a **JSON array** containing the **file name, start line, end line, and similarity score**.
-    (e.g., [{"file": "...", "start": 10, "end": 20, "score": 0.85}])
+    """
+    Given an issue description or bug report in `question`, return the
+    *k* most relevant code regions that might be related to the problem.
+    The output is a JSON array where each entry contains:
+
+      * file : path to the file
+      * start : starting line number
+      * end   : ending line number
+      * score : similarity score from the RAG model
+
+    Parameters
+    ----------
+    question : str
+        Natural‑language description of the problem.
+    repo : str | None, optional
+        Restrict the search to a single repository. If omitted,
+        all indexed repositories are considered.
+    k : int, optional
+        Number of candidate regions to return (default 16).
+
+    Returns
+    -------
+    TextContent
+        JSON‑formatted list of candidate locations.
     """
     logger.info(f"called analyze_issue : {question}")
     try:

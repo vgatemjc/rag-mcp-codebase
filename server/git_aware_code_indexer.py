@@ -83,7 +83,7 @@ class Embeddings:
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key if self.api_key else "unused",  # TEI may not require it; set to dummy if empty
-            timeout=120.0
+            timeout=None
         )
 
     def embed(self, texts: List[str]) -> List[List[float]]:

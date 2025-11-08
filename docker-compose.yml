@@ -17,28 +17,30 @@ services:
     restart: unless-stopped
     network_mode: "host"
     ipc: host
-    deploy:
+    deploy:  # <-- Uncomment this whole block
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
+            - driver: nvidia
+              count: all  # Or 'all'
+              capabilities: [gpu]
     environment:
       - HUGGING_FACE_HUB_ENABLE_HF_TRANSFER=1
     command: >-
       --model nomic-ai/nomic-embed-code
       --dtype float16
       --quantization bitsandbytes
-      --task embedding
       --max-model-len 8192
-      --gpu-memory-utilization 0.9
+      --gpu-memory-utilization 0.3
       --max-num-seqs 64
+      --port 8003
     volumes:
       - ./model_cache:/root/.cache/huggingface
 
   # --------------------------
   # TEI - Embedding 서버
   # --------------------------
-#   tei:
+#  tei:
 #     image: ghcr.io/huggingface/text-embeddings-inference:86-1.8
 #     container_name: tei
 #     restart: unless-stopped
@@ -49,14 +51,16 @@ services:
 #           devices:
 #             - capabilities: [gpu]
 #     environment:
-# #      - MODEL_ID=BAAI/bge-m3
-#       - MODEL_ID=nomic-ai/CodeRankEmbed
-# #      - MODEL_ID=nomic-ai/nomic-embed-code
+ #      - MODEL_ID=BAAI/bge-m3
+ #      - MODEL_ID=nomic-ai/CodeRankEmbed
+#       - MODEL_ID=nomic-ai/nomic-embed-code
 #       - DTYPE=float16
 #       - HUGGING_FACE_HUB_ENABLE_HF_TRANSFER=1
 #       - MAX_CLIENT_BATCH_SIZE=64
 #       - MAX_CONCURRENT_REQUESTS=8
 #       - PAYLOAD-LIMIT=100000000
+#       - MAX_BATCH_TOKENS=32768       # 모델 max_input_length
+#       - AUTO_TRUNCATE=true              # 초과되면 자동 truncate
 #     volumes:
 #       - ./model_cache:/data
 
@@ -76,7 +80,7 @@ services:
       - rag-server
     environment:
       QDRANT_URL: "http://127.0.0.1:6333"
-      TEI_URL: "http://127.0.0.1:80"
+      EMB_URL: "http://127.0.0.1:8003"
       COLLECTION_CODE: "code_chunks"
       COLLECTION_FUNCS: "functions"
       REPO_ROOT: "/workspace"
@@ -85,8 +89,8 @@ services:
       OLLAMA_URL: "http://127.0.0.1:11434"
     command: >
       sh -c "
-      echo '⏳ Waiting for TEI to be ready...' &&
-      timeout 60s sh -c 'until curl -sf http://127.0.0.1:80/health; do sleep 2; done' &&
+      echo '⏳ Waiting for EMEDDING SERVER to be ready...' &&
+      timeout 60s sh -c 'until curl -sf http://127.0.0.1:8003/health; do sleep 2; done' &&
       echo '✅ TEI is ready, starting mcp-server...' &&
       python git_rag_mcp.py
       "
@@ -110,18 +114,18 @@ services:
       - vllm
     environment:
       QDRANT_URL: "http://127.0.0.1:6333"
-      TEI_BASE_URL: "http://127.0.0.1:80"
-      TEI_MODEL: "nomic-ai/CodeRankEmbed"
+      EMB_BASE_URL: "http://127.0.0.1:8003"
+      EMB_MODEL: "nomic-ai/nomic-embed-code"
       OLLAMA_URL: "http://127.0.0.1:11434"
-      DIM: "768"
+      DIM: "3584"
     volumes:
       - ./server:/app
 #      - /home/vgate/workspace/git_test:/workspace/myrepo:rw
       - /home/vgate/workspace/open_ai_gym:/workspace/myrepo:rw
     command: >
       sh -c "
-      echo '⏳ Waiting for TEI to be ready...' &&
-      timeout 60s sh -c 'until curl -sf http://127.0.0.1:80/health; do sleep 2; done' &&
+      echo '⏳ Waiting for EMBEDDING SERVER READY to be ready...' &&
+      timeout 60s sh -c 'until curl -sf http://127.0.0.1:8003/health; do sleep 2; done' &&
       echo '✅ TEI is ready, starting rag-server...' &&
       git config --global --add safe.directory /workspace/myrepo/finding_food/ &&
       uvicorn git_rag_api:app --host 0.0.0.0 --port 8000
@@ -147,9 +151,8 @@ services:
       ENABLE_RAG: true
       EMBEDDING_ENGINE: vllm
       RAG_EMBEDDING_ENGINE: vllm
-      TEI_URL: http://127.0.0.1:80  # 호스트에서 TEI 접근 시
       RAG_EMBEDDING_MODEL: nomic-ai/nomic-embed-code
-      RAG_EMBEDDING_API_BASE: http://127.0.0.1:80
+      RAG_EMBEDDING_API_BASE: http://127.0.0.1:8000
 #      RAG_EMBEDDING_DIM: 1024
       WEBUI_AUTH: "false"
       ENABLE_MODEL_SELECTOR: "true"
