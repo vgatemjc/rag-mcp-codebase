@@ -706,6 +706,7 @@ class Retriever:
         self.store = store
         self.emb = emb
         self.repo_path = repo_path
+        logger.info(f"repo path for Retriever {repo_path}")
 
 # [변경 코멘트: 함수 인자 오류 수정] repo 인자가 함수 정의에 누락되어 있습니다.
     def search(self, query: str, k: int = 5, branch: str = "main", repo: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -724,13 +725,14 @@ class Retriever:
         hits = self.store.search(vec, k=k, filt=filt)
         results = []
 
-        logger.info(f"hits {hits}")
+        logger.debug(f"hits {hits}")
 
         for h in hits:
             item = {"id": h.id, "score": h.score, "payload": h.payload}
             p = h.payload
             if self.repo_path and p.get("path") and p.get("block_lines"):
                 file_path = os.path.join(self.repo_path, p["path"])
+                logger.debug(f"file path for Retriever{file_path}")
                 try:
                     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                         src = f.read()
@@ -746,7 +748,8 @@ class Retriever:
                             s_b = _line_to_byte(src, s)
                             e_b = _line_to_byte(src, e + 1)
                             item["focus_text"] = src[s_b:e_b]
-                except Exception:
+                except Exception as e:
+                    logger.error(f"file open error {e}")
                     pass
             results.append(item)
         return results

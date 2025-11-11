@@ -310,6 +310,48 @@ def generate_update_index_progress(repo_id: str):
         logger.info(f"file diffs {file_diffs}")
 
         for fd in file_diffs:
+
+            # ------------------------------------------------------
+            # ✅ FILE REMOVED CASE — 완전 삭제
+            # ------------------------------------------------------
+            if fd.is_deleted:
+                logger.info(f"[DELETE] File removed: {fd.path}")
+
+                base_src = indexer.git.show_file(base, fd.path) or ""
+                if base_src:
+                    try:
+                        base_chunks = {
+                            c.symbol: c for c in Chunker.chunks(base_src, fd.path, repo_id)
+                        }
+                        remove_ids = []
+
+                        for _, ch in base_chunks.items():
+                            olds = store.scroll_by_logical(ch.logical_id, is_latest=True)
+                            remove_ids.extend([p.id for p in olds])
+
+                        if remove_ids:
+                            store.client.delete(
+                                collection_name=config.COLLECTION,
+                                points=remove_ids
+                            )
+                            logger.info(f"[DELETE] Removed {len(remove_ids)} vectors for {fd.path}")
+                    except Exception as e:
+                        logger.error(f"[ERROR] Failed to remove deleted file {fd.path}: {e}")
+
+                processed += 1
+                yield json.dumps({
+                    "status": "processing",
+                    "message": f"Removed deleted file: {fd.path}",
+                    "file": fd.path,
+                    "total_files": total_files,
+                    "processed_files": processed,
+                    "last_commit": head
+                }) + "\n"
+                continue
+
+            # ------------------------------------------------------
+            # ✅ NORMAL CASE — FILE EXISTS
+            # ------------------------------------------------------
             head_src = indexer.git.show_file(head if base != head else None, fd.path) or ""
             logger.debug(f"index commit : head_src {head_src}")
             
@@ -317,7 +359,7 @@ def generate_update_index_progress(repo_id: str):
                 processed += 1
                 yield json.dumps({
                     "status": "processing",
-                    "message": f"Skipped missing file: {fd.path}",
+                    "message": f"Skipped missing file (not deleted but no head src): {fd.path}",
                     "file": fd.path,
                     "total_files": total_files,
                     "processed_files": processed,

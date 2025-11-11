@@ -7,6 +7,12 @@ from fastmcp import FastMCP
 from mcp.types import TextContent
 from importlib.metadata import version as get_version  # 버전 정보를 가져오기 위한 import
 import sys, logging
+import pathlib
+import asyncio
+import re
+# CHANGED: repo2md_ts 모듈을 직접 임포트하여 function call 방식으로 사용합니다.
+#         (프로세스 호출이 아님)
+import repo2md_ts as r2m  # CHANGED
 
 # 강제로 stdout 플러시
 print(">>> TEST PRINT <<<", flush=True)
@@ -41,13 +47,117 @@ logger.info(f"Loaded FastMCP Version: {MCP_VERSION}")
 # 1. MCP 인스턴스 초기화
 mcp = FastMCP("rag-mcp")
 
+logger.info(dir(mcp))
 
 # ----------------------
 # MCP 도구 정의
 # ----------------------
 
+import os
+import re
+from typing import List
+
 @mcp.tool()
 async def search_code(query: str, k: int = 8, repo: str | None = None):
+    """
+    Search the codebase that match
+    the given `query` using grep-like keyword search. Each result contains:
+
+      * A location string (``repo/path#line``)
+      * The matched line identifier
+      * A similarity score (fixed at 1.0 for matches)
+      * The snippet text (line with context)
+
+    Parameters
+    ----------
+    query : str
+        Text describing what you’re looking for (case-insensitive substring match).
+    k : int, optional
+        Number of top results to return (default 8).
+    repo : str | None, optional
+        Restrict the search to a particular repository ID. If omitted,
+        all repositories indexed under REPO_ROOT are searched.
+
+    Returns
+    -------
+    TextContent
+        A formatted string containing one block per result, suitable for
+        display or further processing by the LLM.
+    """
+    logger.info(f"called search_code : {query}")
+    try:
+        # Determine repos to search
+        if repo:
+            repos = [repo]
+        else:
+            repos = [d for d in os.listdir(REPO_ROOT) if os.path.isdir(os.path.join(REPO_ROOT, d))]
+        
+        formatted_results: List[str] = []
+        search_count = 0
+        
+        # Simple regex for code files (extend as needed)
+        code_file_pattern = re.compile(r'\.(py|js|java|c|cpp|h|ts|jsx|html|css|json|md|txt)$', re.IGNORECASE)
+        
+        for repo_name in repos:
+            if search_count >= k:
+                break
+            repo_root = os.path.join(REPO_ROOT, repo_name)
+            if not os.path.exists(repo_root):
+                continue
+            
+            for root, dirs, files in os.walk(repo_root):
+                if search_count >= k:
+                    break
+                for filename in files:
+                    if search_count >= k:
+                        break
+                    if not code_file_pattern.search(filename):
+                        continue
+                    
+                    full_path = os.path.join(root, filename)
+                    rel_path = os.path.relpath(full_path, repo_root)
+                    
+                    try:
+                        with open(full_path, "r", errors="ignore") as f:
+                            lines = f.readlines()
+                        
+                        query_lower = query.lower()
+                        for line_num, line in enumerate(lines, 1):
+                            if search_count >= k:
+                                break
+                            if query_lower in line.lower():
+                                # Extract snippet with 1 line context before/after
+                                start_line = max(0, line_num - 2)
+                                end_line = min(len(lines), line_num + 1)
+                                snippet_lines = lines[start_line:end_line]
+                                code_snippet = ''.join(snippet_lines).rstrip()
+                                
+                                # Simple symbol extraction: look for nearest def/class/function
+                                symbol_match = re.search(r'(def|class|function)\s+(\w+)', code_snippet)
+                                symbol = symbol_match.group(2) if symbol_match else f"line_{line_num}"
+                                
+                                location = f"{repo_name}/{rel_path}#{line_num}"
+                                score_str = "score=1.0000"  # Fixed score for grep match
+                                
+                                formatted_results.append(
+                                    f"{location}\n{symbol}\n{score_str}\n\n{code_snippet}\n{'-'*60}\n"
+                                )
+                                search_count += 1
+                    except Exception as file_e:
+                        logger.warning(f"Error reading {full_path}: {str(file_e)}")
+                        continue
+        
+        if not formatted_results:
+            return TextContent(type="text", text="No matches found for the query.")
+        
+        logger.info(f"found {len(formatted_results)} results")
+        return TextContent(type="text", text="".join(formatted_results))
+    except Exception as e:
+        logger.error(f"Error in search_code: {str(e)}")
+        return TextContent(type="text", text=f"Error: {str(e)}")
+
+@mcp.tool()
+async def semantic_code_search(query: str, k: int = 8, repo: str | None = None):
     """
     Search the codebase for the *k* most semantically relevant snippets that match
     the given `query`. The request is forwarded to the RAG service and each result
@@ -257,6 +367,105 @@ async def analyze_issue(question: str, repo: str | None = None, k: int = 16):
         logger.info(f"result {items}")
         return TextContent(type="text", text=json.dumps(items, ensure_ascii=False, indent=2))
     except Exception as e:
+        return TextContent(type="text", text=f"Error: {str(e)}")
+
+# CHANGED: repo_tree_md를 repo_id 기반으로 사용하도록 변경
+@mcp.tool()
+async def repo_tree_md(
+    repo_id: str,               # ✅ path 삭제 → repo_id만 받도록 변경
+    depth: int = 3, 
+    max_lines: int = 10
+):
+    """
+    Generate a Markdown report of the repository using repo_id, matching RAG server path rules.
+
+    Parameters
+    ----------
+    repo_id : str
+        Repository name (same as RAG server's /workspace/myrepo/<repo_id>)
+    depth : int
+        Tree/definition depth (0~3)
+    max_lines : int
+        Max snippet lines for depth >= 3
+    """
+
+    logger.info(f"repo_tree_md called repo_id={repo_id} depth={depth}")
+
+    # ✅ RAG 서버와 동일한 repo root 사용
+    # CHANGED: path = Path("/workspace/myrepo") / repo_id
+    base_root = pathlib.Path("/workspace/myrepo")     # ✅ RAG server constant
+    repo_path = base_root / repo_id                  # ✅ repo_id 기반으로 통합
+
+    # ✅ repo validation (RAG API와 동일한 체크)
+    # CHANGED: .git 확인
+    if not repo_path.exists() or not (repo_path / ".git").exists():
+        return TextContent(
+            type="text",
+            text=f"Invalid repo_id: {repo_id} (path: {repo_path})"
+        )
+
+    # ✅ 기존 walk_repo 호출 방식 그대로 (function call 방식)
+    md = await asyncio.to_thread(
+        r2m.walk_repo,
+        repo_path,
+        int(depth),
+        int(max_lines)
+    )
+
+    # (Optional) 너무 큰 결과 truncate
+    if len(md) > 800000:
+        md = md[:800000] + "\n\n[TRUNCATED: output > 800KB]"
+
+    return TextContent(type="text", text=md)
+
+@mcp.tool()
+async def list_mcp_tools():
+    """
+    Return a newline-separated list of available MCP tool names and short descriptions
+    where possible. This helps an LLM know what actions the MCP server supports.
+    """
+    import sys, inspect
+    logger.info("called list_mcp_tools")
+
+    try:
+        tools = []
+
+        # ✅ FastMCP 2.12.5: 정확한 registry
+        try:
+            tool_mgr = getattr(mcp, "_tool_manager", None)
+            if tool_mgr and hasattr(tool_mgr, "_tools"):
+                for name, tool in tool_mgr._tools.items():
+                    # ✅ FastMCP stores the description here
+                    desc = tool.description or ""
+                    if not desc:
+                        # fallback: check function docstring
+                        func = getattr(tool, "func", None)
+                        if func and func.__doc__:
+                            desc = func.__doc__.strip().splitlines()[0]
+
+                    tools.append(f"{name} : {desc}")
+        except Exception as e:
+            logger.warning(f"Tool list from tool_manager failed: {e}")
+
+        # ✅ fallback: 모듈 introspection
+        this_mod = sys.modules[__name__]
+        for name, obj in inspect.getmembers(this_mod, inspect.iscoroutinefunction):
+            if getattr(obj, "__wrapped__", None) is not None:
+                desc = obj.__doc__.strip().splitlines()[0] if obj.__doc__ else ""
+                tools.append(f"{name} : {desc}")
+
+        # ✅ dedup
+        seen = set()
+        out = []
+        for t in tools:
+            if t not in seen:
+                seen.add(t)
+                out.append(t)
+
+        return TextContent(type="text", text="\n".join(out))
+
+    except Exception as e:
+        logger.exception("list_mcp_tools error")
         return TextContent(type="text", text=f"Error: {str(e)}")
 
 if __name__ == "__main__":
