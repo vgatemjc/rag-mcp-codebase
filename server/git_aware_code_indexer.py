@@ -243,46 +243,125 @@ class Hunk:
 class FileDiff:
     path: str
     hunks: List[Hunk]
+    is_deleted: bool = False
+    old_path: Optional[str] = None
+    new_path: Optional[str] = None
 
 class DiffUtil:
     @staticmethod
     def parse_unified_diff(text: str) -> List[FileDiff]:
-        file_diffs = []
-        current = None
-        current_path = None
-        for line in io.StringIO(text):
+        """
+        Robust unified-diff parser that:
+         - extracts old/new paths from `diff --git a/... b/...`
+         - recognizes `deleted file mode` even if it appears before ---/+++ lines
+         - creates FileDiff for deletions even when no hunks are present
+        """
+        file_diffs: List[FileDiff] = []
+        current: Optional[FileDiff] = None
+
+        # "parsed" values from the `diff --git` header — best initial source for paths
+        parsed_old: Optional[str] = None
+        parsed_new: Optional[str] = None
+
+        # per-file deleted marker (can be set by 'deleted file mode' line)
+        deleted_flag = False
+
+        for raw_line in io.StringIO(text):
+            line = raw_line.rstrip("\n")
+
+            # new file-diff header
             if line.startswith("diff --git "):
+                # finalize previous fd
                 if current:
+                    current.is_deleted = deleted_flag or (current.new_path == "/dev/null")
+                    if current.is_deleted and current.old_path:
+                        current.path = current.old_path
                     file_diffs.append(current)
+
+                # reset state for next file
                 current = None
-                current_path = None
-                continue
-            if line.startswith("+++ b/"):
-                current_path = line.strip()[6:]
-                current = FileDiff(path=current_path, hunks=[])
-                continue
-            if line.startswith("@@ ") and current is not None:
-                # [최종 수정 코멘트: Hunk Header 길이 생략 문제 해결]
-                # 정규 표현식에서 길이(,\d+) 부분을 선택적 그룹(?, ?)으로 변경합니다.
-                # 길이(length)가 없으면 기본값은 1입니다.
-                pattern = r"@@ -(?P<bstart>\d+)(?:,(?P<blen>\d+))? \+(?P<hstart>\d+)(?:,(?P<hlen>\d+))? @@.*"
-                m = re.match(pattern, line.strip())
+                parsed_old = None
+                parsed_new = None
+                deleted_flag = False
+
+                # try to parse "diff --git a/foo b/foo" for immediate path info
+                m = re.match(r"^diff --git a/(?P<old>.+?) b/(?P<new>.+)$", line)
                 if m:
-                    # blen과 hlen은 선택적이므로, 매칭되지 않은 경우 None 대신 '1'을 사용합니다.
+                    parsed_old = m.group("old")
+                    parsed_new = m.group("new")
+                continue
+
+            # old path line (--- a/...)
+            if line.startswith("--- a/"):
+                old_path = line[6:].strip()
+                # record old path if not already set by header
+                if parsed_old is None:
+                    parsed_old = old_path
+                # set current if deletion was seen earlier and no current yet
+                if deleted_flag and current is None:
+                    # use the parsed_old (or old_path) as the deleted path
+                    path_to_use = parsed_old or old_path
+                    current = FileDiff(path=path_to_use, hunks=[], is_deleted=True, old_path=path_to_use, new_path="/dev/null")
+                continue
+
+            # new path line (+++ b/...)
+            if line.startswith("+++ b/"):
+                new_path = line[6:].strip()
+                if parsed_new is None:
+                    parsed_new = new_path
+                # create FileDiff if not already created (we now have a usable path)
+                if current is None:
+                    # if new_path == /dev/null => deletion; prefer old path for `path`
+                    if new_path == "/dev/null":
+                        path_to_use = parsed_old or None
+                        current = FileDiff(path=path_to_use or "/dev/null", hunks=[], is_deleted=True, old_path=parsed_old, new_path="/dev/null")
+                    else:
+                        current = FileDiff(path=new_path, hunks=[], is_deleted=False, old_path=parsed_old, new_path=new_path)
+                else:
+                    # update current metadata if it already exists
+                    current.new_path = new_path
+                    current.old_path = current.old_path or parsed_old
+                continue
+
+            # explicit deleted-file marker
+            if line.startswith("deleted file mode"):
+                deleted_flag = True
+                logger.info("file delete found")
+                # If we already have parsed_old (from header) and no current, create FileDiff now
+                if current is None:
+                    path_to_use = parsed_old or parsed_new or None
+                    # Use parsed_old if possible (old path is canonical for deletions)
+                    if path_to_use:
+                        current = FileDiff(path=path_to_use, hunks=[], is_deleted=True, old_path=parsed_old, new_path="/dev/null")
+                    # otherwise delay creation until we see --- a/ or +++ b/
+                continue
+
+            # hunk header
+            if line.startswith("@@ ") and current is not None:
+                pattern = r"@@ -(?P<bstart>\d+)(?:,(?P<blen>\d+))? \+(?P<hstart>\d+)(?:,(?P<hlen>\d+))? @@.*"
+                m = re.match(pattern, line)
+                if m:
                     blen = int(m.group('blen')) if m.group('blen') else 1
                     hlen = int(m.group('hlen')) if m.group('hlen') else 1
-
                     current.hunks.append(
                         Hunk(
-                            int(m.group('bstart')), 
-                            blen, 
-                            int(m.group('hstart')), 
+                            int(m.group('bstart')),
+                            blen,
+                            int(m.group('hstart')),
                             hlen
                         )
                     )
+                continue
+
+        # finalize last file diff
         if current:
+            current.is_deleted = deleted_flag or (current.new_path == "/dev/null")
+            if current.is_deleted and current.old_path:
+                current.path = current.old_path
             file_diffs.append(current)
-        return [fd for fd in file_diffs if fd.path and fd.hunks]
+
+        # keep file diffs that have path and either hunks or is_deleted
+        return [fd for fd in file_diffs if fd.path and (fd.hunks or fd.is_deleted)]
 
     @staticmethod
     def translate(r: Range, hunks: List[Hunk]) -> Range:

@@ -329,11 +329,14 @@ def generate_update_index_progress(repo_id: str):
                             olds = store.scroll_by_logical(ch.logical_id, is_latest=True)
                             remove_ids.extend([p.id for p in olds])
 
+                        from qdrant_client.http.models import PointIdsList
+
                         if remove_ids:
                             store.client.delete(
                                 collection_name=config.COLLECTION,
-                                points=remove_ids
+                                points_selector=PointIdsList(points=remove_ids)
                             )
+
                             logger.info(f"[DELETE] Removed {len(remove_ids)} vectors for {fd.path}")
                     except Exception as e:
                         logger.error(f"[ERROR] Failed to remove deleted file {fd.path}: {e}")
