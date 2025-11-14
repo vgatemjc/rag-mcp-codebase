@@ -4,10 +4,10 @@ This plan scopes the refactor required to support a centralized repository regis
 
 ## 1. Step-by-step Implementation Plan
 
-### Phase 1 – Repository Registry Backbone
-1. Create a persistent metadata store (SQLite + SQLModel) for repositories, sandboxes, and generated reports.
-2. Add a FastAPI router `/registry` with CRUD endpoints that manage repository entries synchronized with GitHub webhooks (push, archive, delete).
-3. Update the indexing startup flow so that `ensure_collection` and related workers read the registry entry (collection name, embedding model, last indexed Git commit) before touching Qdrant.
+### Phase 1 – Repository Registry Backbone ✅ Completed
+1. **Done:** `server/repository_registry.py` now hosts a SQLModel/SQLite-backed store for repositories, sandboxes, and reports.
+2. **Done:** `git_rag_api.py` exposes a `/registry` router with CRUD + webhook endpoints so GitHub events can push/archive/delete entries.
+3. **Done:** Indexing helpers resolve repository metadata before touching Qdrant, wiring the per-repo collection/model plus last indexed commit through `ensure_repository_entry`, dynamic embedding/vector-store caches, and registry write-backs.
 
 ### Phase 2 – Sandbox Provisioning & Lifecycle
 1. Implement sandbox provisioning endpoints `/registry/{repo_id}/sandboxes` that create Git worktrees rooted at `repos/<repo_id>/users/<user_id>` using the GitHub default branch as a baseline.

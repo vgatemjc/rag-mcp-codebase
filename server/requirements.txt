@@ -18,4 +18,4 @@ tiktoken==0.7.0
 openai>=1.40.0
 requests>=2.31.0
 pathspec
-
+sqlmodel>=0.0.21

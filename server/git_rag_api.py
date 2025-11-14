@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 import httpx
 import numpy as np
 import sys, logging
 from pydantic import BaseModel
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Literal, Set
 import os
 import json
 import uvicorn
@@ -16,6 +16,10 @@ import ast
 import re
 import hashlib
 from qdrant_client.models import PointStruct
+from qdrant_client import QdrantClient
+from datetime import datetime
+import threading
+from repository_registry import RepositoryRegistry, Repository
 from git_aware_code_indexer import (
     VectorStore, Embeddings, Retriever, Indexer, GitCLI, DiffUtil, Range, Hunk, Chunker,
     Relocalizer, _TS_AVAILABLE
@@ -50,51 +54,62 @@ config = Config()
 modelslug = re.sub(r"[^a-z0-9]+", "", config.EMB_MODEL.lower())
 config.COLLECTION = f"git_rag-{config.ENV}-{modelslug}"
 
-from qdrant_client import QdrantClient  # Ensure this is imported if not already (for type hints)
 from qdrant_client.models import Distance, VectorParams
 from qdrant_client.http.exceptions import UnexpectedResponse  # For better error handling
 
-def ensure_collection():
-    """컬렉션이 없으면 생성 (DIM 동적 계산 포함)."""
-    try:
-        if store.client.collection_exists(config.COLLECTION):  # Fixed: Use collection_exists instead of has_collection
-            logger.info(f"Collection '{config.COLLECTION}' already exists.")
-            # Check existing DIM for mismatch
-            col_info = store.client.get_collection(config.COLLECTION)
-            existing_dim = col_info.config.params.vectors.size
-            if config.DIM and config.DIM != existing_dim:
-                logger.warning(f"DIM mismatch: config={config.DIM}, existing={existing_dim}. Reindex after recreating collection.")
-            return
+registry = RepositoryRegistry()
+_embedding_cache: Dict[str, Embeddings] = {}
+_vector_store_cache: Dict[str, VectorStore] = {}
+_collection_lock = threading.Lock()
+_collection_ready: Set[str] = set()
+_cache_lock = threading.Lock()
+qdrant_admin = QdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY)
 
-        # DIM이 None/0이면 샘플 임베딩으로 동적 계산
-        if not config.DIM or config.DIM == 0:
+def get_embeddings_client(model_name: str) -> Embeddings:
+    with _cache_lock:
+        client = _embedding_cache.get(model_name)
+        if client is None:
+            client = Embeddings(base_url=config.EMB_BASE_URL, model=model_name, api_key=config.OPENAI_API_KEY)
+            _embedding_cache[model_name] = client
+    return client
+
+def ensure_collection(collection_name: str, embedding_model: str):
+    with _collection_lock:
+        if collection_name in _collection_ready:
+            return
+        try:
+            qdrant_admin.get_collection(collection_name=collection_name)
+            _collection_ready.add(collection_name)
+            return
+        except Exception:
+            pass
+
+        if not config.DIM:
             logger.info("DIM not set; computing dynamically from sample embedding.")
-            sample_text = "This is a sample text for dimension detection."
-            sample_vector = emb.embed([sample_text])[0]  # 단일 텍스트 임베딩 (list로 호출)
+            sample_text = "dimension probe"
+            sample_vector = get_embeddings_client(embedding_model).embed([sample_text])[0]
             dynamic_dim = len(sample_vector)
-            logger.info(f"Detected embedding dimension: {dynamic_dim}")
         else:
             dynamic_dim = config.DIM
 
-        # 컬렉션 생성
-        store.client.create_collection(
-            collection_name=config.COLLECTION,
-            vectors_config=VectorParams(
-                size=dynamic_dim,
-                distance=Distance.COSINE  # 일반적인 임베딩 거리 메트릭
-            )
+        qdrant_admin.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=dynamic_dim, distance=Distance.COSINE)
         )
-        logger.info(f"Created collection '{config.COLLECTION}' with dim={dynamic_dim}.")
-    except Exception as e:
-        logger.error(f"Failed to ensure collection '{config.COLLECTION}': {e}")
-        # Optional: Don't raise here to allow server startup (handle lazily in endpoints), but for strict setup, keep:
-        raise HTTPException(status_code=500, detail=f"Collection setup failed: {str(e)}")
+        _collection_ready.add(collection_name)
+        logger.info(f"Created collection '{collection_name}' with dim={dynamic_dim}.")
 
+def get_vector_store(collection_name: str, embedding_model: str) -> VectorStore:
+    ensure_collection(collection_name, embedding_model)
+    with _cache_lock:
+        store = _vector_store_cache.get(collection_name)
+        if store is None:
+            store = VectorStore(collection=collection_name, url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, dim=config.DIM)
+            _vector_store_cache[collection_name] = store
+    return store
 
-# Global instances
-emb = Embeddings(base_url=config.EMB_BASE_URL, model=config.EMB_MODEL, api_key=config.OPENAI_API_KEY)
-store = VectorStore(collection=config.COLLECTION, url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, dim=config.DIM)  # Re-init with new collection
-ensure_collection()
+# pre-create default collection resources
+ensure_collection(config.COLLECTION, config.EMB_MODEL)
 
 # State management
 def load_state() -> Dict[str, str]:
@@ -107,6 +122,31 @@ def save_state(state: Dict[str, str]):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
 
+def ensure_repo_registry_entry(repo_id: str) -> Repository:
+    defaults = {
+        "name": repo_id,
+        "collection_name": config.COLLECTION,
+        "embedding_model": config.EMB_MODEL,
+    }
+    repo = registry.ensure_repository(repo_id, defaults)
+    if repo.archived:
+        raise HTTPException(status_code=400, detail=f"Repository '{repo_id}' is archived")
+    return repo
+
+def sync_state_with_registry(repo_id: str, repo_entry: Repository):
+    if not repo_entry.last_indexed_commit:
+        return
+    state = load_state()
+    if state.get(repo_id) == repo_entry.last_indexed_commit:
+        return
+    state[repo_id] = repo_entry.last_indexed_commit
+    save_state(state)
+
+def resolve_clients(repo_entry: Repository):
+    emb_client = get_embeddings_client(repo_entry.embedding_model)
+    store_client = get_vector_store(repo_entry.collection_name, repo_entry.embedding_model)
+    return emb_client, store_client
+
 def get_repo_path(repo_id: str) -> Path:
     path = REPOS_DIR / repo_id
     if not path.exists() or not (path / ".git").exists():
@@ -114,6 +154,53 @@ def get_repo_path(repo_id: str) -> Path:
     return path
 
 app = FastAPI(title="Git RAG API")
+registry_router = APIRouter(prefix="/registry", tags=["registry"])
+
+@registry_router.get("", response_model=List[RepositoryOut])
+def list_registry_entries(include_archived: bool = False):
+    entries = registry.list_repositories(include_archived=include_archived)
+    return [RepositoryOut.model_validate(entry) for entry in entries]
+
+@registry_router.get("/{repo_id}", response_model=RepositoryOut)
+def get_registry_entry(repo_id: str):
+    repo = registry.get_repository(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"Repository '{repo_id}' not found")
+    return RepositoryOut.model_validate(repo)
+
+@registry_router.post("", response_model=RepositoryOut)
+def create_registry_entry(payload: RepositoryIn):
+    try:
+        repo = registry.create_repository(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return RepositoryOut.model_validate(repo)
+
+@registry_router.put("/{repo_id}", response_model=RepositoryOut)
+def update_registry_entry(repo_id: str, payload: RepositoryUpdate):
+    try:
+        repo = registry.update_repository(repo_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return RepositoryOut.model_validate(repo)
+
+@registry_router.delete("/{repo_id}", status_code=204)
+def delete_registry_entry(repo_id: str):
+    registry.delete_repository(repo_id)
+    return
+
+@registry_router.post("/webhook", response_model=Optional[RepositoryOut])
+def registry_webhook(event: RegistryWebhook):
+    payload = event.model_dump(exclude={"action"})
+    try:
+        repo = registry.handle_webhook(event.action, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if repo is None:
+        return None
+    return RepositoryOut.model_validate(repo)
+
+app.include_router(registry_router)
 
 class SearchRequest(BaseModel):
     query: str
@@ -139,15 +226,56 @@ class IndexProgress(BaseModel):
     processed_files: Optional[int] = None
     last_commit: Optional[str] = None
 
+class RepositoryIn(BaseModel):
+    repo_id: str
+    name: Optional[str] = None
+    url: Optional[str] = None
+    collection_name: Optional[str] = None
+    embedding_model: Optional[str] = None
+    last_indexed_commit: Optional[str] = None
+
+class RepositoryUpdate(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    collection_name: Optional[str] = None
+    embedding_model: Optional[str] = None
+    last_indexed_commit: Optional[str] = None
+    archived: Optional[bool] = None
+
+class RepositoryOut(BaseModel):
+    repo_id: str
+    name: str
+    url: Optional[str] = None
+    collection_name: str
+    embedding_model: str
+    last_indexed_commit: Optional[str] = None
+    archived: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class RegistryWebhook(BaseModel):
+    action: Literal["push", "archive", "delete"]
+    repo_id: str
+    name: Optional[str] = None
+    url: Optional[str] = None
+    collection_name: Optional[str] = None
+    embedding_model: Optional[str] = None
+
 from fastapi.responses import StreamingResponse
 import io
 
 def generate_full_index_progress(repo_id: str):
     try:
+        repo_entry = ensure_repo_registry_entry(repo_id)
+        sync_state_with_registry(repo_id, repo_entry)
         repo_path = get_repo_path(repo_id)
+        emb_client, store_client = resolve_clients(repo_entry)
         git = GitCLI(str(repo_path))
         head = git.get_head()
-        indexer = Indexer(str(repo_path), repo_id, emb, store, config.COLLECTION)
+        indexer = Indexer(str(repo_path), repo_id, emb_client, store_client, repo_entry.collection_name)
         files = indexer.git.list_files(head)
         total_files = len(files)
         processed = 0
@@ -168,16 +296,15 @@ def generate_full_index_progress(repo_id: str):
             if head_src:
                 file_chunks = Chunker.chunks(head_src, path, repo_id)
                 if file_chunks:
-                    # 파일별로 embed 호출 (배치지만 파일 단위로)
                     texts = [c.content for c in file_chunks]
-                    vectors = emb.embed(texts)
+                    vectors = emb_client.embed(texts)
                     points = []
                     for c, v in zip(file_chunks, vectors):
                         payload = indexer._build_payload(c, config.BRANCH, head)
                         point_id = payload["point_id"]
                         points.append(PointStruct(id=point_id, vector=v, payload=payload))
                     if points:
-                        store.client.upsert(collection_name=config.COLLECTION, points=points)
+                        store_client.client.upsert(collection_name=repo_entry.collection_name, points=points)
                     
                     processed += 1
                     yield json.dumps({
@@ -213,6 +340,7 @@ def generate_full_index_progress(repo_id: str):
         state = load_state()
         state[repo_id] = head
         save_state(state)
+        registry.update_last_indexed_commit(repo_id, head)
         yield json.dumps({
             "status": "completed",
             "message": "Full index completed",
@@ -230,7 +358,10 @@ def generate_full_index_progress(repo_id: str):
 
 def generate_update_index_progress(repo_id: str):
     try:
+        repo_entry = ensure_repo_registry_entry(repo_id)
+        sync_state_with_registry(repo_id, repo_entry)
         repo_path = get_repo_path(repo_id)
+        emb_client, store_client = resolve_clients(repo_entry)
         git = GitCLI(str(repo_path))
         head = git.get_head()
         state = load_state()
@@ -246,7 +377,7 @@ def generate_update_index_progress(repo_id: str):
             }) + "\n"
             return
         
-        indexer = Indexer(str(repo_path), repo_id, emb, store, config.COLLECTION)
+        indexer = Indexer(str(repo_path), repo_id, emb_client, store_client, repo_entry.collection_name)
         
         # [변경 코멘트: 논리적 오류 수정] 베이스 == 헤드일 때 로컬 변경사항을 인덱싱해야 하며,
         # 베이스 != 헤드일 때 커밋 변경사항을 인덱싱해야 합니다.
@@ -326,14 +457,14 @@ def generate_update_index_progress(repo_id: str):
                         remove_ids = []
 
                         for _, ch in base_chunks.items():
-                            olds = store.scroll_by_logical(ch.logical_id, is_latest=True)
+                            olds = store_client.scroll_by_logical(ch.logical_id, is_latest=True)
                             remove_ids.extend([p.id for p in olds])
 
                         from qdrant_client.http.models import PointIdsList
 
                         if remove_ids:
-                            store.client.delete(
-                                collection_name=config.COLLECTION,
+                            store_client.client.delete(
+                                collection_name=repo_entry.collection_name,
                                 points_selector=PointIdsList(points=remove_ids)
                             )
 
@@ -390,7 +521,7 @@ def generate_update_index_progress(repo_id: str):
             to_embed = []
             to_update_only_pos = []
             for _, ch in head_chunks.items():
-                prev_points = store.scroll_by_logical(ch.logical_id, is_latest=True)
+                prev_points = store_client.scroll_by_logical(ch.logical_id, is_latest=True)
                 if not prev_points:
                     to_embed.append(ch)
                     continue
@@ -411,23 +542,23 @@ def generate_update_index_progress(repo_id: str):
             # 파일별 embed 및 upsert
             if to_embed:
                 texts = [c.content for c in to_embed]
-                vectors = emb.embed(texts)
+                vectors = emb_client.embed(texts)
                 points = []
                 for c, v in zip(to_embed, vectors):
-                    olds = store.scroll_by_logical(c.logical_id, is_latest=True)
+                    olds = store_client.scroll_by_logical(c.logical_id, is_latest=True)
                     if olds:
-                        store.set_payload([p.id for p in olds], {"is_latest": False})
+                        store_client.set_payload([p.id for p in olds], {"is_latest": False})
                     payload = indexer._build_payload(c, config.BRANCH, commit_sha)
                     point_id = payload["point_id"]
                     points.append(PointStruct(id=point_id, vector=v, payload=payload))
                 if points:
-                    store.client.upsert(collection_name=config.COLLECTION, points=points)
+                    store_client.client.upsert(collection_name=repo_entry.collection_name, points=points)
             
             if to_update_only_pos:
                 for ch, r in to_update_only_pos:
-                    olds = store.scroll_by_logical(ch.logical_id, is_latest=True)
+                    olds = store_client.scroll_by_logical(ch.logical_id, is_latest=True)
                     if olds:
-                        store.set_payload([p.id for p in olds], {"lines": [r.start_line, r.end_line]})
+                        store_client.set_payload([p.id for p in olds], {"lines": [r.start_line, r.end_line]})
             
             processed += 1
             yield json.dumps({
@@ -442,6 +573,7 @@ def generate_update_index_progress(repo_id: str):
         # 완료 상태
         state[repo_id] = head
         save_state(state)
+        registry.update_last_indexed_commit(repo_id, head)
         yield json.dumps({
             "status": "completed",
             "message": "Incremental index completed",
@@ -476,6 +608,7 @@ def update_index(repo_id: str):
 @app.get("/repos/{repo_id}/status", response_model=StatusResponse)
 def get_local_status(repo_id: str):
     try:
+        ensure_repo_registry_entry(repo_id)
         repo_path = get_repo_path(repo_id)
         git = GitCLI(str(repo_path))
         status_out = git._run("status", "--porcelain", "--untracked-files=no")
@@ -522,9 +655,14 @@ def search(req: SearchRequest):
     try:
         repo_path = None
         if req.repo_id:
+            repo_entry = ensure_repo_registry_entry(req.repo_id)
+            emb_client, store_client = resolve_clients(repo_entry)
             repo_path = get_repo_path(req.repo_id)
-        retriever = Retriever(store, emb, str(repo_path) if repo_path else None)
-        # [변경 코멘트: 함수 호출 인자 수정] Retriever.search의 인자가 변경되었으므로 (repo 추가) 수정합니다.
+        else:
+            repo_entry = None
+            emb_client = get_embeddings_client(config.EMB_MODEL)
+            store_client = get_vector_store(config.COLLECTION, config.EMB_MODEL)
+        retriever = Retriever(store_client, emb_client, str(repo_path) if repo_path else None)
         results = retriever.search(req.query, req.k, config.BRANCH, repo=req.repo_id)
         return results
     except Exception as e:
