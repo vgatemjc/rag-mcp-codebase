@@ -17,3 +17,5 @@ fastmcp==2.12.5
 tiktoken==0.7.0
 openai>=1.40.0
 requests>=2.31.0
+pathspec
+
