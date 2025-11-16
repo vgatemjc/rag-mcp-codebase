@@ -1,3 +1,9 @@
+import sys
+print(f"__file__: {__file__}")
+print(f"__package__: {__package__}")
+print(f"sys.path: {sys.path[:3]}")  # First few paths for brevity
+print(">>> TEST PRINT <<<", flush=True)  # Your existing print
+
 from fastapi import FastAPI, HTTPException, APIRouter
 import httpx
 import numpy as np
@@ -9,7 +15,6 @@ import os
 import json
 import uvicorn
 import logging
-import sys
 import textwrap
 from dataclasses import dataclass
 import ast
@@ -64,143 +69,6 @@ _collection_lock = threading.Lock()
 _collection_ready: Set[str] = set()
 _cache_lock = threading.Lock()
 qdrant_admin = QdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY)
-
-def get_embeddings_client(model_name: str) -> Embeddings:
-    with _cache_lock:
-        client = _embedding_cache.get(model_name)
-        if client is None:
-            client = Embeddings(base_url=config.EMB_BASE_URL, model=model_name, api_key=config.OPENAI_API_KEY)
-            _embedding_cache[model_name] = client
-    return client
-
-def ensure_collection(collection_name: str, embedding_model: str):
-    with _collection_lock:
-        if collection_name in _collection_ready:
-            return
-        try:
-            qdrant_admin.get_collection(collection_name=collection_name)
-            _collection_ready.add(collection_name)
-            return
-        except Exception:
-            pass
-
-        if not config.DIM:
-            logger.info("DIM not set; computing dynamically from sample embedding.")
-            sample_text = "dimension probe"
-            sample_vector = get_embeddings_client(embedding_model).embed([sample_text])[0]
-            dynamic_dim = len(sample_vector)
-        else:
-            dynamic_dim = config.DIM
-
-        qdrant_admin.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=dynamic_dim, distance=Distance.COSINE)
-        )
-        _collection_ready.add(collection_name)
-        logger.info(f"Created collection '{collection_name}' with dim={dynamic_dim}.")
-
-def get_vector_store(collection_name: str, embedding_model: str) -> VectorStore:
-    ensure_collection(collection_name, embedding_model)
-    with _cache_lock:
-        store = _vector_store_cache.get(collection_name)
-        if store is None:
-            store = VectorStore(collection=collection_name, url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, dim=config.DIM)
-            _vector_store_cache[collection_name] = store
-    return store
-
-# pre-create default collection resources
-ensure_collection(config.COLLECTION, config.EMB_MODEL)
-
-# State management
-def load_state() -> Dict[str, str]:
-    if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {}
-
-def save_state(state: Dict[str, str]):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
-
-def ensure_repo_registry_entry(repo_id: str) -> Repository:
-    defaults = {
-        "name": repo_id,
-        "collection_name": config.COLLECTION,
-        "embedding_model": config.EMB_MODEL,
-    }
-    repo = registry.ensure_repository(repo_id, defaults)
-    if repo.archived:
-        raise HTTPException(status_code=400, detail=f"Repository '{repo_id}' is archived")
-    return repo
-
-def sync_state_with_registry(repo_id: str, repo_entry: Repository):
-    if not repo_entry.last_indexed_commit:
-        return
-    state = load_state()
-    if state.get(repo_id) == repo_entry.last_indexed_commit:
-        return
-    state[repo_id] = repo_entry.last_indexed_commit
-    save_state(state)
-
-def resolve_clients(repo_entry: Repository):
-    emb_client = get_embeddings_client(repo_entry.embedding_model)
-    store_client = get_vector_store(repo_entry.collection_name, repo_entry.embedding_model)
-    return emb_client, store_client
-
-def get_repo_path(repo_id: str) -> Path:
-    path = REPOS_DIR / repo_id
-    if not path.exists() or not (path / ".git").exists():
-        raise ValueError(f"Invalid repo: {repo_id}")
-    return path
-
-app = FastAPI(title="Git RAG API")
-registry_router = APIRouter(prefix="/registry", tags=["registry"])
-
-@registry_router.get("", response_model=List[RepositoryOut])
-def list_registry_entries(include_archived: bool = False):
-    entries = registry.list_repositories(include_archived=include_archived)
-    return [RepositoryOut.model_validate(entry) for entry in entries]
-
-@registry_router.get("/{repo_id}", response_model=RepositoryOut)
-def get_registry_entry(repo_id: str):
-    repo = registry.get_repository(repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail=f"Repository '{repo_id}' not found")
-    return RepositoryOut.model_validate(repo)
-
-@registry_router.post("", response_model=RepositoryOut)
-def create_registry_entry(payload: RepositoryIn):
-    try:
-        repo = registry.create_repository(payload.model_dump())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return RepositoryOut.model_validate(repo)
-
-@registry_router.put("/{repo_id}", response_model=RepositoryOut)
-def update_registry_entry(repo_id: str, payload: RepositoryUpdate):
-    try:
-        repo = registry.update_repository(repo_id, payload.model_dump(exclude_unset=True))
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    return RepositoryOut.model_validate(repo)
-
-@registry_router.delete("/{repo_id}", status_code=204)
-def delete_registry_entry(repo_id: str):
-    registry.delete_repository(repo_id)
-    return
-
-@registry_router.post("/webhook", response_model=Optional[RepositoryOut])
-def registry_webhook(event: RegistryWebhook):
-    payload = event.model_dump(exclude={"action"})
-    try:
-        repo = registry.handle_webhook(event.action, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    if repo is None:
-        return None
-    return RepositoryOut.model_validate(repo)
-
-app.include_router(registry_router)
 
 class SearchRequest(BaseModel):
     query: str
@@ -263,6 +131,145 @@ class RegistryWebhook(BaseModel):
     url: Optional[str] = None
     collection_name: Optional[str] = None
     embedding_model: Optional[str] = None
+
+def get_embeddings_client(model_name: str) -> Embeddings:
+    with _cache_lock:
+        client = _embedding_cache.get(model_name)
+        if client is None:
+            client = Embeddings(base_url=config.EMB_BASE_URL, model=model_name, api_key=config.OPENAI_API_KEY)
+            _embedding_cache[model_name] = client
+    return client
+
+def ensure_collection(collection_name: str, embedding_model: str):
+    with _collection_lock:
+        if collection_name in _collection_ready:
+            return
+        try:
+            qdrant_admin.get_collection(collection_name=collection_name)
+            _collection_ready.add(collection_name)
+            return
+        except Exception:
+            pass
+
+        if not config.DIM:
+            logger.info("DIM not set; computing dynamically from sample embedding.")
+            sample_text = "dimension probe"
+            sample_vector = get_embeddings_client(embedding_model).embed([sample_text])[0]
+            dynamic_dim = len(sample_vector)
+        else:
+            dynamic_dim = config.DIM
+
+        qdrant_admin.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=dynamic_dim, distance=Distance.COSINE)
+        )
+        _collection_ready.add(collection_name)
+        logger.info(f"Created collection '{collection_name}' with dim={dynamic_dim}.")
+
+def get_vector_store(collection_name: str, embedding_model: str) -> VectorStore:
+    ensure_collection(collection_name, embedding_model)
+    with _cache_lock:
+        store = _vector_store_cache.get(collection_name)
+        if store is None:
+            store = VectorStore(collection=collection_name, url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, dim=config.DIM)
+            _vector_store_cache[collection_name] = store
+    return store
+
+# State management
+def load_state() -> Dict[str, str]:
+    if STATE_FILE.exists():
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    return {}
+
+def save_state(state: Dict[str, str]):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+def ensure_repo_registry_entry(repo_id: str) -> Repository:
+    defaults = {
+        "name": repo_id,
+        "collection_name": config.COLLECTION,
+        "embedding_model": config.EMB_MODEL,
+    }
+    repo = registry.ensure_repository(repo_id, defaults)
+    if repo.archived:
+        raise HTTPException(status_code=400, detail=f"Repository '{repo_id}' is archived")
+    return repo
+
+def sync_state_with_registry(repo_id: str, repo_entry: Repository):
+    if not repo_entry.last_indexed_commit:
+        return
+    state = load_state()
+    if state.get(repo_id) == repo_entry.last_indexed_commit:
+        return
+    state[repo_id] = repo_entry.last_indexed_commit
+    save_state(state)
+
+def resolve_clients(repo_entry: Repository):
+    emb_client = get_embeddings_client(repo_entry.embedding_model)
+    store_client = get_vector_store(repo_entry.collection_name, repo_entry.embedding_model)
+    return emb_client, store_client
+
+def get_repo_path(repo_id: str) -> Path:
+    path = REPOS_DIR / repo_id
+    if not path.exists() or not (path / ".git").exists():
+        raise ValueError(f"Invalid repo: {repo_id}")
+    return path
+
+app = FastAPI(title="Git RAG API")
+registry_router = APIRouter(prefix="/registry", tags=["registry"])
+
+@app.on_event("startup")
+async def startup_event():
+    # 외부 API 호출 / Qdrant collection 생성 / embedding 테스트 모두 여기에서만 실행
+    ensure_collection(config.COLLECTION, config.EMB_MODEL)
+
+@registry_router.get("", response_model=List[RepositoryOut])
+def list_registry_entries(include_archived: bool = False):
+    entries = registry.list_repositories(include_archived=include_archived)
+    return [RepositoryOut.model_validate(entry) for entry in entries]
+
+@registry_router.get("/{repo_id}", response_model=RepositoryOut)
+def get_registry_entry(repo_id: str):
+    repo = registry.get_repository(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"Repository '{repo_id}' not found")
+    return RepositoryOut.model_validate(repo)
+
+@registry_router.post("", response_model=RepositoryOut)
+def create_registry_entry(payload: RepositoryIn):
+    try:
+        repo = registry.create_repository(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return RepositoryOut.model_validate(repo)
+
+@registry_router.put("/{repo_id}", response_model=RepositoryOut)
+def update_registry_entry(repo_id: str, payload: RepositoryUpdate):
+    try:
+        repo = registry.update_repository(repo_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return RepositoryOut.model_validate(repo)
+
+@registry_router.delete("/{repo_id}", status_code=204)
+def delete_registry_entry(repo_id: str):
+    registry.delete_repository(repo_id)
+    return
+
+@registry_router.post("/webhook", response_model=Optional[RepositoryOut])
+def registry_webhook(event: RegistryWebhook):
+    payload = event.model_dump(exclude={"action"})
+    try:
+        repo = registry.handle_webhook(event.action, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if repo is None:
+        return None
+    return RepositoryOut.model_validate(repo)
+
+app.include_router(registry_router)
 
 from fastapi.responses import StreamingResponse
 import io
