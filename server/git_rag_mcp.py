@@ -10,9 +10,13 @@ import sys, logging
 import pathlib
 import asyncio
 import re
+
 # CHANGED: repo2md_ts 모듈을 직접 임포트하여 function call 방식으로 사용합니다.
 #         (프로세스 호출이 아님)
-import repo2md_ts as r2m  # CHANGED
+try:
+    from services import repo2md_ts as r2m  # type: ignore
+except ImportError:  # 실행 경로에 따라 server 패키지 경로가 필요할 수 있음
+    from server.services import repo2md_ts as r2m  # type: ignore
 
 # 강제로 stdout 플러시
 print(">>> TEST PRINT <<<", flush=True)
