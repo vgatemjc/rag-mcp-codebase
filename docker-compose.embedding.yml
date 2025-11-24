@@ -1,0 +1,100 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    network_mode: "host"
+    volumes:
+      - ./rag-db:/qdrant/storage
+
+  embedding-tei:
+    profiles: ["tei"]
+    image: ghcr.io/huggingface/text-embeddings-inference:86-1.8
+    container_name: embedding-tei
+    restart: unless-stopped
+    network_mode: "host"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    environment:
+      - MODEL_ID=${TEI_MODEL_ID:-nomic-ai/CodeRankEmbed}
+      - DTYPE=${TEI_DTYPE:-float16}
+      - HUGGING_FACE_HUB_ENABLE_HF_TRANSFER=1
+      - MAX_CLIENT_BATCH_SIZE=${TEI_MAX_BATCH_SIZE:-64}
+      - MAX_CONCURRENT_REQUESTS=${TEI_MAX_CONCURRENT_REQUESTS:-8}
+      - PAYLOAD-LIMIT=${TEI_PAYLOAD_LIMIT:-100000000}
+      - MAX_BATCH_TOKENS=${TEI_MAX_BATCH_TOKENS:-32768}
+      - AUTO_TRUNCATE=${TEI_AUTO_TRUNCATE:-true}
+    volumes:
+      - ./model_cache:/data
+
+  embedding-vllm-nvidia:
+    image: vllm/vllm-openai:latest
+    container_name: embedding-vllm-nvidia
+    restart: unless-stopped
+    network_mode: "host"
+    ipc: host
+    profiles: ["vllm-nvidia"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - HUGGING_FACE_HUB_ENABLE_HF_TRANSFER=1
+    command: >-
+      --model ${VLLM_MODEL_ID:-nomic-ai/nomic-embed-code}
+      --dtype ${VLLM_DTYPE:-float16}
+      --max-model-len ${VLLM_MAX_LEN:-8192}
+      --gpu-memory-utilization ${VLLM_GPU_UTIL:-0.3}
+      --max-num-seqs ${VLLM_MAX_SEQS:-64}
+      --port ${VLLM_PORT:-8003}
+    volumes:
+      - ./model_cache:/root/.cache/huggingface
+
+  embedding-vllm-amd:
+    image: rocm/vllm-dev:rocm6.4.1_navi_ubuntu24.04_py3.12_pytorch_2.6_vllm_0.8.5
+    container_name: embedding-vllm-amd
+    restart: unless-stopped
+    network_mode: "host"
+    ipc: host
+    profiles: ["vllm-amd"]
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    environment:
+      - ROCM_PATH=/opt/rocm
+      - HSA_OVERRIDE_GFX_VERSION=11.0.0
+      - VLLM_ENFORCE_EAGER=true
+      - PYTORCH_ROCM_ARCH=gfx1100
+      - VLLM_USE_TRITON_FLASH_ATTN=0
+    entrypoint: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+    command: >-
+      --model ${VLLM_MODEL_ID:-BAAI/bge-small-en-v1.5}
+      --dtype ${VLLM_DTYPE:-float16}
+      --max-model-len ${VLLM_MAX_LEN:-512}
+      --max-num-seqs ${VLLM_MAX_SEQS:-64}
+      --port ${VLLM_PORT:-8003}
+    volumes:
+      - ./model_cache:/root/.cache/huggingface
+
+  embedding-ollama:
+    image: ollama/ollama:latest
+    container_name: embedding-ollama
+    restart: unless-stopped
+    network_mode: "host"
+    profiles: ["ollama"]
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-24h}
+    command: ["serve"]
+
+volumes:
+  rag-db:
+  model_cache:
+  ollama_models:

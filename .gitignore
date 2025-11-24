@@ -13,5 +13,7 @@ server/__pycache__
 !/.env.example
 !/.gitignore
 !/docker-compose.yml
+!/docker-compose.embedding.yml
+!/docker-compose.rag.yml
 !/AGENTS.md
 !/README.md

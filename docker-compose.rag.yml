@@ -1,0 +1,76 @@
+services:
+  rag-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.rag
+    container_name: rag-server
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      QDRANT_URL: "${QDRANT_ENDPOINT}"
+      EMB_BASE_URL: "${EMB_ENDPOINT}"
+      EMB_MODEL: "${EMB_MODEL}"
+      OLLAMA_URL: "${OLLAMA_ENDPOINT}"
+      DIM: "${DIM:-0}"
+    volumes:
+      - ./server:/app
+      - ${HOST_REPO_PATH}:/workspace/myrepo:rw
+    command: >
+      sh -c "
+      echo '⏳ Waiting for embedding server to be ready...' &&
+      timeout 60s sh -c 'until curl -sf ${EMB_ENDPOINT}/health; do sleep 2; done' &&
+      echo '✅ Embedding server ready, starting rag-server...' &&
+      git config --global --add safe.directory /workspace/myrepo &&
+      uvicorn server.main:app --host 0.0.0.0 --port 8000
+      "
+
+  mcp-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.mcp
+    container_name: mcp-server
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      QDRANT_URL: "${QDRANT_ENDPOINT}"
+      EMB_URL: "${EMB_ENDPOINT}"
+      COLLECTION_CODE: "${COLLECTION_CODE:-code_chunks}"
+      COLLECTION_FUNCS: "${COLLECTION_FUNCS:-functions}"
+      REPO_ROOT: "/workspace/myrepo"
+      MCP_PORT: "${MCP_PORT:-8083}"
+      FASTMCP_SERVER_PORT: "${MCP_PORT:-8083}"
+      OLLAMA_URL: "${OLLAMA_ENDPOINT}"
+    command: >
+      sh -c "
+      echo '⏳ Waiting for embedding server to be ready...' &&
+      timeout 60s sh -c 'until curl -sf ${EMB_ENDPOINT}/health; do sleep 2; done' &&
+      echo '✅ Embedding server ready, starting mcp-server...' &&
+      python git_rag_mcp.py
+      "
+    volumes:
+      - ./server:/app
+      - ${HOST_REPO_PATH}:/workspace/myrepo:rw
+
+  webui:
+    image: ghcr.io/open-webui/open-webui:0.6.36
+    container_name: open-webui
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      OLLAMA_BASE_URL: "${OLLAMA_ENDPOINT}"
+      VECTOR_DB: qdrant
+      QDRANT_URI: "${QDRANT_ENDPOINT}"
+      ENABLE_MCP: "true"
+      ENABLE_RAG: "true"
+      EMBEDDING_ENGINE: "${WEBUI_EMBED_ENGINE:-vllm}"
+      RAG_EMBEDDING_ENGINE: "${WEBUI_RAG_ENGINE:-vllm}"
+      RAG_EMBEDDING_MODEL: "${WEBUI_RAG_MODEL:-nomic-ai/nomic-embed-code}"
+      RAG_EMBEDDING_API_BASE: "${RAG_SERVER_ENDPOINT}"
+      WEBUI_AUTH: "${WEBUI_AUTH:-false}"
+      ENABLE_MODEL_SELECTOR: "${WEBUI_ENABLE_MODEL_SELECTOR:-true}"
+      RAG_ALLOWED_FILE_EXTENSIONS: "pdf,docx,md,txt,json,yaml,yml,toml,csv,html,css,js,ts,jsx,tsx,py,java,c,cpp,h,go,sh,dockerfile,rs,log"
+    volumes:
+      - ./webui_data:/app/backend/data
+
+volumes:
+  webui_data:
