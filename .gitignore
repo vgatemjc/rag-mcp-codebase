@@ -4,9 +4,14 @@
 # 1. 최상위 디렉토리를 추적합니다.
 !server/
 !script/
+!plans/
+!tests/
 
 !server/**
 !script/**
+!plans/**
+!tests/**
+tests/__pycache__
 server/__pycache__
 
 # 만약 루트에 특정 파일도 포함하고 싶다면:
