@@ -1,21 +1,23 @@
-    FROM python:3.11-slim
-    WORKDIR /app
-    RUN apt-get update && apt-get install -y git curl build-essential pkg-config \
-        python3-dev \
-        && rm -rf /var/lib/apt/lists/*
+FROM python:3.11-slim
 
+WORKDIR /app
 
-    COPY requirements.txt /app/requirements.txt
-    RUN pip install --no-cache-dir -r requirements.txt
-    ENV PYTHONPATH="/app"
+RUN apt-get update && apt-get install -y git curl build-essential pkg-config \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-    COPY . /app
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-    # Set MCP transport to HTTP
-    ENV MCP_TRANSPORT=http
-    ENV MCP_HOST=0.0.0.0
-    ENV MCP_PORT=8083
+# Keep the package path stable at /app/server so imports like `server.git_rag_mcp` work.
+COPY . /app/server
+ENV PYTHONPATH="/app"
 
-    # Run the MCP server using uv
-    CMD ["python", "mcp_server.py"]
+# Set MCP transport to HTTP
+ENV MCP_TRANSPORT=http
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8083
+
+# Run the MCP server using the packaged module path
+CMD ["python", "-m", "server.git_rag_mcp"]
     

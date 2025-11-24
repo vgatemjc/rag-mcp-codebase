@@ -12,9 +12,9 @@ services:
       EMB_MODEL: "${EMB_MODEL}"
       OLLAMA_URL: "${OLLAMA_ENDPOINT}"
       DIM: "${DIM:-0}"
-      PYTHONPATH: "/workspace/myrepo"
+      PYTHONPATH: "/app:/workspace/myrepo"
     volumes:
-      - ./server:/app
+      - ./server:/app/server
       - ${HOST_REPO_PATH}:/workspace/myrepo:rw
     command: >
       sh -c "
@@ -41,15 +41,16 @@ services:
       MCP_PORT: "${MCP_PORT:-8083}"
       FASTMCP_SERVER_PORT: "${MCP_PORT:-8083}"
       OLLAMA_URL: "${OLLAMA_ENDPOINT}"
+      PYTHONPATH: "/app"
     command: >
       sh -c "
       echo '⏳ Waiting for embedding server to be ready...' &&
       timeout 60s sh -c 'until curl -sf ${EMB_ENDPOINT}/health; do sleep 2; done' &&
       echo '✅ Embedding server ready, starting mcp-server...' &&
-      python git_rag_mcp.py
+      python -m server.git_rag_mcp
       "
     volumes:
-      - ./server:/app
+      - ./server:/app/server
       - ${HOST_REPO_PATH}:/workspace/myrepo:rw
 
   webui:
