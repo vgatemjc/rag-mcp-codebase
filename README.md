@@ -3,7 +3,7 @@
 This repository bundles a lightweight Retrieval-Augmented Generation stack: a FastAPI service for indexing/searching code, a custom MCP agent that wires chunking and Git-aware diffing into Model Context Protocol tooling, and helper scripts plus docker-compose resources to spin up Qdrant, the embedding server, and Open WebUI for experimentation.
 
 ## Quick Start
-- **Env vars:** copy `.env.example` and export at least `QDRANT_URL`, `EMB_BASE_URL`, `EMB_MODEL`, and `OPENAI_API_KEY`.
+- **Env vars:** copy `.env.example`. For docker-compose workflows, source a provider-specific file (e.g., `.env.embedding.tei`) so your shell exports `QDRANT_ENDPOINT`, `EMB_ENDPOINT`, `EMB_MODEL`, `HOST_REPO_PATH`, `RAG_SERVER_ENDPOINT`, and `OLLAMA_ENDPOINT`; the rag compose stack maps those into the container-facing names (`QDRANT_URL`, `EMB_BASE_URL`, `EMB_MODEL`, `OLLAMA_URL`). For host-only development, export `QDRANT_URL`, `EMB_BASE_URL`, `EMB_MODEL`, and `OPENAI_API_KEY`.
 - **Local API (non-docker dev):** `uvicorn server.main:app --reload --host 0.0.0.0 --port 8000` (FastAPI lives behind `create_app()` in `server/app.py`). `server/git_rag_api.py` re-exports the same app for compatibility.
 - **MCP worker:** `python server/git_rag_mcp.py` with the same environment variables for Qdrant/TEI.
 - **Dockerized workflow:** infrastructure and app live in separate compose stacks:
@@ -11,7 +11,24 @@ This repository bundles a lightweight Retrieval-Augmented Generation stack: a Fa
   - `docker compose -f docker-compose.rag.yml up -d --build` (runs the FastAPI server, MCP worker, and optional web UI).
   - Tear both stacks down before large refactors: `docker compose -f ... down`.
 - **Manual flows (inside docker or host):** use `bash script/index_repo.sh /path/to/repo` and `bash script/search_repo.sh /path/to/repo`.
-- **Tests:** prefer containerized runs, e.g. `docker compose -f docker-compose.rag.yml run --rm rag-server pytest tests/test_repository_registry.py`. For host-only unit tests without Qdrant, set `SKIP_COLLECTION_INIT=1`.
+- **Tests:** prefer containerized runs, e.g.  
+  `docker compose -f docker-compose.rag.yml run --rm rag-server sh -c "cd /workspace/myrepo && pytest tests/test_repository_registry.py"`  
+  (the workdir switch ensures `server.*` imports resolve via `PYTHONPATH=/workspace/myrepo`). For host-only unit tests without Qdrant, set `SKIP_COLLECTION_INIT=1`.
+
+## Environment Configuration
+- `.env.example` contains two blocks: container defaults (`QDRANT_URL`, `EMB_BASE_URL`, `EMB_MODEL`, `OLLAMA_URL`, etc.) plus host-side exports consumed by docker compose (`QDRANT_ENDPOINT`, `EMB_ENDPOINT`, `HOST_REPO_PATH`, `RAG_SERVER_ENDPOINT`, `OLLAMA_ENDPOINT`). Source it or copy into a provider-specific override before launching containers.
+- Create lightweight provider files such as `.env.embedding.tei`, `.env.embedding.vllm`, etc., with the host-side values for that stack and run `source .env.embedding.<provider>` prior to `docker compose` commands. Example (TEI):
+  ```bash
+  # ~/.env.embedding.tei
+  export QDRANT_ENDPOINT=http://localhost:6333
+  export EMB_ENDPOINT=http://localhost:8080/v1
+  export EMB_MODEL=text-embedding-3-large
+  export HOST_REPO_PATH=/absolute/path/to/repo
+  export RAG_SERVER_ENDPOINT=http://localhost:8000
+  export OLLAMA_ENDPOINT=http://localhost:11434
+  ```
+- The rag compose file automatically rewires these host exports into the container variables FastAPI expects, so you only maintain the provider-specific endpoints in one place.
+- Health check vs. embeddings note: the rag compose stack polls `${EMB_ENDPOINT}/health`. For vLLM, set `EMB_ENDPOINT` to the root (e.g., `http://localhost:8003`) because `/health` is served there even though embeddings are under `/v1/embeddings`. TEI keeps `/v1` in the endpoint (e.g., `http://localhost:8080/v1`) and serves `/v1/health`.
 
 ## Docker-Based Development Workflow
 1. Tear down both compose stacks before any significant refactor:  
@@ -38,4 +55,4 @@ Implementation standards, testing expectations, and pull-request conventions are
   - `docker compose -f docker-compose.embedding.yml --profile vllm-nvidia up -d --build`
   - `docker compose -f docker-compose.embedding.yml --profile vllm-amd up -d --build`
   - `docker compose -f docker-compose.embedding.yml --profile ollama up -d --build`
-  Each profile brings up Qdrant plus one embedding container. Match `.env.embedding.*` files to profile selection so `EMB_BASE_URL`/`EMB_MODEL` align (e.g., TEI → `http://embedding-tei:8080/v1`, vLLM → `http://embedding-vllm-nvidia:8003/v1` or `http://embedding-vllm-amd:8003/v1`, Ollama → `http://embedding-ollama:11434/v1`).
+  Each profile brings up Qdrant plus one embedding container. Source the matching `.env.embedding.*` file before starting the rag compose stack so `QDRANT_ENDPOINT`, `EMB_ENDPOINT`, and `EMB_MODEL` align (e.g., TEI → `http://embedding-tei:8080/v1`, vLLM → `http://embedding-vllm-nvidia:8003` or `http://embedding-vllm-amd:8003`, Ollama → `http://embedding-ollama:11434/v1`).

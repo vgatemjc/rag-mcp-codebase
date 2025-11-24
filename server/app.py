@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -18,18 +19,21 @@ logger = logging.getLogger(__name__)
 
 def create_app(config: Config | None = None) -> FastAPI:
     cfg = config or Config()
-    app = FastAPI(title="Git RAG API")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if cfg.SKIP_COLLECTION_INIT:
+            logger.info("Skipping default collection initialization (SKIP_COLLECTION_INIT set).")
+            yield
+            return
+        app.state.initializer.ensure_default_collection()
+        yield
+
+    app = FastAPI(title="Git RAG API", lifespan=lifespan)
 
     app.state.config = cfg
     app.state.registry = RepositoryRegistry()
     app.state.initializer = Initializer(cfg)
-
-    @app.on_event("startup")
-    async def startup_event():
-        if app.state.config.SKIP_COLLECTION_INIT:
-            logger.info("Skipping default collection initialization (SKIP_COLLECTION_INIT set).")
-            return
-        app.state.initializer.ensure_default_collection()
 
     app.include_router(registry_router)
     app.include_router(index_router)

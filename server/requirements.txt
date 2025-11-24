@@ -19,3 +19,4 @@ openai>=1.40.0
 requests>=2.31.0
 pathspec
 sqlmodel>=0.0.21
+pytest==9.0.1

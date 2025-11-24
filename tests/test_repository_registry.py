@@ -42,7 +42,7 @@ def test_repository_registry_crud(tmp_path):
 def test_registry_router_crud(tmp_path, monkeypatch):
     monkeypatch.setenv("REGISTRY_DB_DIR", str(tmp_path))
     monkeypatch.setenv("SKIP_COLLECTION_INIT", "1")
-    module = importlib.import_module("git_rag_api")
+    module = importlib.import_module("server.git_rag_api")
     module = importlib.reload(module)
     client = TestClient(module.app)
 

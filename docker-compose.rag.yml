@@ -12,6 +12,7 @@ services:
       EMB_MODEL: "${EMB_MODEL}"
       OLLAMA_URL: "${OLLAMA_ENDPOINT}"
       DIM: "${DIM:-0}"
+      PYTHONPATH: "/workspace/myrepo"
     volumes:
       - ./server:/app
       - ${HOST_REPO_PATH}:/workspace/myrepo:rw

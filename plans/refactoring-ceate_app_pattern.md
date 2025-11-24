@@ -144,4 +144,4 @@ create_app(testing=True) 모드 지원
 - [x] Introduced `server/app.py` with `create_app()` plus `server/main.py`/`server/git_rag_api.py` entrypoints.
 - [x] Split routers (`server/routers/*`), models (`server/models/*`), and shared services/config helpers per this spec.
 - [x] Updated README/AGENTS to document the new layout and commands.
-- [ ] Dependency installation + `python -m pytest tests/test_repository_registry.py` (blocked: even after creating `.venv` the sandbox cannot reach PyPI: `.venv/bin/pip install -r server/requirements.txt` fails with `Failed to establish a new connection` for `fastapi==0.115.0`).
+- [x] Dependency installation + `python -m pytest tests/test_repository_registry.py` (validated via dockerized run with embedding/Qdrant stack; added pytest to `server/requirements.txt`).
