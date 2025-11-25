@@ -6,12 +6,13 @@
 - Ensure state tracking (`index_state.json`) and noop handling remain stable across reruns.
 
 ### Environment & Fixtures
-- Launch dependencies via compose before testing: `docker compose -f docker-compose.embedding.yml up -d --build` then `docker compose -f docker-compose.rag.yml up -d --build`.
+- Launch dependencies via compose before testing: `docker compose -f docker-compose.embedding.yml up -d --build` then `docker compose -f docker-compose.rag.yml up -d --build` (required for search assertions).
 - Target API base URL: `http://localhost:8000`.
-- Register repositories through `/registry` before indexing, matching README guidance; use in-memory/temp SQLite via `REGISTRY_DB_DIR` for isolation.
-- Temporary repo fixture: `/workspace/myrepo/test_repo` on branch `head`; configure Git `user.email`/`user.name` and add repo to `safe.directory`.
-- State file location: `index_state.json` (ensure cleanup between tests).
-- Use Requests client with short timeouts; handle streaming responses for indexing endpoints (consume lines, assert final JSON payload).
+- Register repositories through `/registry` before indexing, matching README guidance; set `REGISTRY_DB_DIR` to a temp dir per test session so registry writes are isolated.
+- Temporary repo fixture: use `tmp_path` inside the container for `REPOS_DIR`, create `test_repo` on branch `head`; configure Git `user.email`/`user.name` and add repo to `safe.directory`.
+- State file location: set `STATE_FILE` to a temp path scoped to the test run (cleanup after); ensure compose run mounts a writable dir if needed.
+- Use Requests client with short timeouts; handle streaming responses for indexing endpoints by consuming lines until the final JSON payload and asserting on that object.
+- For in-process router tests, wire `TestClient` with env overrides (`REGISTRY_DB_DIR`, `REPOS_DIR`, `STATE_FILE`) to match the temp fixtures.
 
 ### Registry Coverage (aligns with `tests/test_repository_registry.py`)
 - Exercise CRUD and webhook flows via API and direct `RepositoryRegistry` class:
@@ -22,7 +23,7 @@
   - Delete repo and confirm 204 + absence.
 - Add lightweight unit coverage for index-router/registry integration (e.g., `tests/test_index_registry_alignment.py`):
   - Ensure `_ensure_repo_registry_entry` calls `ensure_repository` with `Config` defaults (collection and embedding model).
-  - Assert archived repositories raise HTTP 400 before indexing proceeds.
+  - Assert archived repositories raise HTTP 400 before indexing proceeds; archived repo status should not advance `last_indexed_commit`.
 - Ensure registry-based metadata is consulted during indexing/search flows (end-to-end tests should retrieve repo config through registry rather than bypassing it).
 
 ### Test Cases
@@ -46,9 +47,9 @@
 ### Structure & Implementation Notes
 - Convert the procedural script into pytest functions/fixtures:
   - Session-scoped fixture to spin up the temp repo and capture SHAs.
-  - Helper fixture for `api_call` that supports streaming responses for `/index/*`.
-  - Fixture to reset `index_state.json` per test run.
-- Add fixtures for temporary registry DB and FastAPI client (`TestClient`) to cover router-level CRUD in parallel with direct class tests.
+  - Helper fixture for `api_call` that supports streaming responses for `/index/*` and returns the final JSON chunk.
+  - Fixture to reset `index_state.json` per test run (respecting `STATE_FILE` env).
+- Add fixtures for temporary registry DB and FastAPI client (`TestClient`) to cover router-level CRUD in parallel with direct class tests (env override helper to keep registry/state/repo paths aligned).
 - Mark tests that require live Qdrant/embedding as integration (e.g., `@pytest.mark.integration`) for selective execution.
 - Keep logs minimal; prefer assertions with clear failure messages.
 
