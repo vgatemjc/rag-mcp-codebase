@@ -26,11 +26,14 @@ class Sandbox(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     repo_id: str = Field(foreign_key="repository.repo_id", index=True)
     user_id: str
+    created_by: Optional[str] = None
     path: str
     status: str = Field(default="ready")
     auto_sync: bool = Field(default=False)
     parent_commit: Optional[str] = None
     upstream_url: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    last_checked_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
     updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
 
@@ -178,6 +181,11 @@ class RepositoryRegistry:
             statement = select(Sandbox).where(Sandbox.repo_id == repo_id)
             return list(session.exec(statement).all())
 
+    def list_all_sandboxes(self) -> List[Sandbox]:
+        with self._with_session() as session:
+            statement = select(Sandbox)
+            return list(session.exec(statement).all())
+
     def get_sandbox(self, sandbox_id: int, repo_id: Optional[str] = None) -> Optional[Sandbox]:
         with self._with_session() as session:
             statement = select(Sandbox).where(Sandbox.id == sandbox_id)
@@ -190,11 +198,14 @@ class RepositoryRegistry:
             sandbox = Sandbox(
                 repo_id=data["repo_id"],
                 user_id=data["user_id"],
+                created_by=data.get("created_by") or data["user_id"],
                 path=data["path"],
                 status=data.get("status") or "ready",
                 auto_sync=bool(data.get("auto_sync", False)),
                 parent_commit=data.get("parent_commit"),
                 upstream_url=data.get("upstream_url"),
+                last_synced_at=data.get("last_synced_at"),
+                last_checked_at=data.get("last_checked_at"),
             )
             with self._with_session() as session:
                 session.add(sandbox)
@@ -212,14 +223,27 @@ class RepositoryRegistry:
                 if not sandbox:
                     raise ValueError(f"Sandbox {sandbox_id} not found")
                 updated = False
+                custom_updated_at = data.get("updated_at")
                 for field, value in data.items():
                     if value is None or not hasattr(sandbox, field):
                         continue
                     setattr(sandbox, field, value)
                     updated = True
                 if updated:
-                    sandbox.updated_at = datetime.utcnow()
+                    sandbox.updated_at = custom_updated_at or datetime.utcnow()
                 session.add(sandbox)
                 session.commit()
                 session.refresh(sandbox)
                 return sandbox
+
+    def delete_sandbox(self, sandbox_id: int, repo_id: Optional[str] = None) -> None:
+        with self._lock:
+            with self._with_session() as session:
+                statement = select(Sandbox).where(Sandbox.id == sandbox_id)
+                if repo_id:
+                    statement = statement.where(Sandbox.repo_id == repo_id)
+                sandbox = session.exec(statement).first()
+                if not sandbox:
+                    return
+                session.delete(sandbox)
+                session.commit()

@@ -103,6 +103,7 @@ def create_sandbox(request: Request, repo_id: str, payload: SandboxCreate):
         {
             "repo_id": repo_id,
             "user_id": payload.user_id,
+            "created_by": payload.created_by or payload.user_id,
             "path": str(path),
             "status": payload.status or "ready",
             "auto_sync": payload.auto_sync,
@@ -110,6 +111,7 @@ def create_sandbox(request: Request, repo_id: str, payload: SandboxCreate):
             "upstream_url": repo.url,
         }
     )
+    sandbox_manager.record_creation(sandbox)
     return SandboxOut.model_validate(sandbox)
 
 
