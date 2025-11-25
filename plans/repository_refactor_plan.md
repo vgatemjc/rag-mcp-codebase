@@ -52,4 +52,4 @@ Updated to reflect the post-`create_app` architecture while keeping the remainin
 - Centralize registry write-backs (index metadata, sandbox status, report artifacts) through `RepositoryRegistry` methods to reduce cross-module coupling.
 
 ## Testing Notes
-- Prefer dockerized tests per `tests/DOCKER_TESTING.md`. Example for the new sandbox flow: `HOST_REPO_PATH=$(pwd) docker compose -f docker-compose.rag.yml run --rm -e HOST_REPO_PATH=$(pwd) -e SKIP_COLLECTION_INIT=1 -e QDRANT_ENDPOINT=http://localhost:6333 -e EMB_ENDPOINT=http://localhost:8080 -e EMB_MODEL=text-embedding-3-large -w /workspace/myrepo rag-server pytest tests/test_sandbox_routes.py`.
+- Prefer dockerized tests per `plans/docker-testing-workflow.md` and `tests/DOCKER_TESTING.md`. Example for the new sandbox flow: `HOST_REPO_PATH=$(pwd) docker compose -f docker-compose.rag.yml run --rm -e HOST_REPO_PATH=$(pwd) -e SKIP_COLLECTION_INIT=1 -e QDRANT_ENDPOINT=http://localhost:6333 -e EMB_ENDPOINT=http://localhost:8080 -e EMB_MODEL=text-embedding-3-large -w /workspace/myrepo rag-server pytest tests/test_sandbox_routes.py`.
