@@ -10,13 +10,19 @@ from server.models.repository import (
     RepositoryOut,
     RepositoryUpdate,
 )
+from server.models.sandbox import SandboxCreate, SandboxOut, SandboxUpdate
 from server.services.repository_registry import RepositoryRegistry
+from server.services.sandbox_manager import SandboxManager
 
 router = APIRouter(prefix="/registry", tags=["registry"])
 
 
 def _registry(request: Request) -> RepositoryRegistry:
     return request.app.state.registry
+
+
+def _sandboxes(request: Request) -> SandboxManager:
+    return request.app.state.sandbox_manager
 
 
 @router.get("", response_model=List[RepositoryOut])
@@ -67,3 +73,58 @@ def registry_webhook(request: Request, event: RegistryWebhook):
     if repo is None:
         return None
     return RepositoryOut.model_validate(repo)
+
+
+@router.get("/{repo_id}/sandboxes", response_model=List[SandboxOut])
+def list_sandboxes(request: Request, repo_id: str):
+    repo = _registry(request).get_repository(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"Repository '{repo_id}' not found")
+    sandboxes = _registry(request).list_sandboxes(repo_id)
+    return [SandboxOut.model_validate(sandbox) for sandbox in sandboxes]
+
+
+@router.post("/{repo_id}/sandboxes", response_model=SandboxOut)
+def create_sandbox(request: Request, repo_id: str, payload: SandboxCreate):
+    registry = _registry(request)
+    repo = registry.get_repository(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"Repository '{repo_id}' not found")
+    if repo.archived:
+        raise HTTPException(status_code=400, detail=f"Repository '{repo_id}' is archived")
+
+    sandbox_manager = _sandboxes(request)
+    try:
+        path, parent_commit = sandbox_manager.ensure_worktree(repo_id, payload.user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    sandbox = registry.create_sandbox(
+        {
+            "repo_id": repo_id,
+            "user_id": payload.user_id,
+            "path": str(path),
+            "status": payload.status or "ready",
+            "auto_sync": payload.auto_sync,
+            "parent_commit": parent_commit,
+            "upstream_url": repo.url,
+        }
+    )
+    return SandboxOut.model_validate(sandbox)
+
+
+@router.patch("/{repo_id}/sandboxes/{sandbox_id}", response_model=SandboxOut)
+def update_sandbox(request: Request, repo_id: str, sandbox_id: int, payload: SandboxUpdate):
+    registry = _registry(request)
+    repo = registry.get_repository(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"Repository '{repo_id}' not found")
+    try:
+        sandbox = registry.update_sandbox(
+            sandbox_id,
+            payload.model_dump(exclude_unset=True),
+            repo_id=repo_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return SandboxOut.model_validate(sandbox)

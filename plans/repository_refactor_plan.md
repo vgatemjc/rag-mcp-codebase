@@ -18,8 +18,8 @@ Updated to reflect the post-`create_app` architecture while keeping the remainin
 3. **Done:** Indexing flows sync `last_indexed_commit` between `index_state.json` and the registry, and lazily initialize per-repo collections/clients.
 
 ### Phase 2 – Sandbox Provisioning & Lifecycle
-1. Expose `/registry/{repo_id}/sandboxes` routes that create/list/update `Sandbox` rows and spawn Git worktrees under `REPOS_DIR/<repo_id>/users/<user_id>` from the default branch.
-2. Track sandbox metadata (creator, parent SHA, upstream URL, status/auto-sync) and emit events/hooks for refresh, diff, and promotion back to GitHub.
+1. **Done:** Expose `/registry/{repo_id}/sandboxes` routes that create/list/update `Sandbox` rows and spawn Git worktrees under `REPOS_DIR/<repo_id>/users/<user_id>` from the default branch (see `SandboxManager` + `Sandbox` model updates).
+2. Track sandbox metadata (creator, parent SHA, upstream URL, status/auto-sync) and emit events/hooks for refresh, diff, and promotion back to GitHub (metadata persisted; hooks still needed).
 3. Background workers to mark stale sandboxes from upstream changes, optionally fast-forward auto-sync sandboxes, and prune abandoned ones after a TTL.
 
 ### Phase 3 – Human-friendly Semantic Search Reports
@@ -50,3 +50,6 @@ Updated to reflect the post-`create_app` architecture while keeping the remainin
 - Move sandbox Git helpers (worktree creation, cleanup, diff helpers) out of `git_aware_code_indexer.py` into a dedicated sandbox manager to consolidate lifecycle logic.
 - Relocate report formatting currently in MCP/search layers into `report_renderer.py` for reuse by API + MCP.
 - Centralize registry write-backs (index metadata, sandbox status, report artifacts) through `RepositoryRegistry` methods to reduce cross-module coupling.
+
+## Testing Notes
+- Prefer dockerized tests per `tests/DOCKER_TESTING.md`. Example for the new sandbox flow: `HOST_REPO_PATH=$(pwd) docker compose -f docker-compose.rag.yml run --rm -e HOST_REPO_PATH=$(pwd) -e SKIP_COLLECTION_INIT=1 -e QDRANT_ENDPOINT=http://localhost:6333 -e EMB_ENDPOINT=http://localhost:8080 -e EMB_MODEL=text-embedding-3-large -w /workspace/myrepo rag-server pytest tests/test_sandbox_routes.py`.

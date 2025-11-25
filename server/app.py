@@ -12,6 +12,7 @@ from server.routers.search_router import router as search_router
 from server.routers.status_router import router as status_router
 from server.services.initializers import Initializer
 from server.services.repository_registry import RepositoryRegistry
+from server.services.sandbox_manager import SandboxManager
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.config = cfg
     app.state.registry = RepositoryRegistry()
     app.state.initializer = Initializer(cfg)
+    app.state.sandbox_manager = SandboxManager(cfg.REPOS_DIR, cfg.BRANCH)
 
     app.include_router(registry_router)
     app.include_router(index_router)

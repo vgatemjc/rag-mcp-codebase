@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 import threading
 
@@ -24,11 +24,13 @@ class Repository(SQLModel, table=True):
 
 class Sandbox(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    repo_id: str = Field(foreign_key="repository.repo_id")
+    repo_id: str = Field(foreign_key="repository.repo_id", index=True)
     user_id: str
     path: str
     status: str = Field(default="ready")
     auto_sync: bool = Field(default=False)
+    parent_commit: Optional[str] = None
+    upstream_url: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
     updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
 
@@ -170,3 +172,54 @@ class RepositoryRegistry:
             self.delete_repository(payload["repo_id"])
             return None
         raise ValueError(f"Unsupported webhook action: {action}")
+
+    def list_sandboxes(self, repo_id: str) -> List[Sandbox]:
+        with self._with_session() as session:
+            statement = select(Sandbox).where(Sandbox.repo_id == repo_id)
+            return list(session.exec(statement).all())
+
+    def get_sandbox(self, sandbox_id: int, repo_id: Optional[str] = None) -> Optional[Sandbox]:
+        with self._with_session() as session:
+            statement = select(Sandbox).where(Sandbox.id == sandbox_id)
+            if repo_id:
+                statement = statement.where(Sandbox.repo_id == repo_id)
+            return session.exec(statement).first()
+
+    def create_sandbox(self, data: Dict[str, Any]) -> Sandbox:
+        with self._lock:
+            sandbox = Sandbox(
+                repo_id=data["repo_id"],
+                user_id=data["user_id"],
+                path=data["path"],
+                status=data.get("status") or "ready",
+                auto_sync=bool(data.get("auto_sync", False)),
+                parent_commit=data.get("parent_commit"),
+                upstream_url=data.get("upstream_url"),
+            )
+            with self._with_session() as session:
+                session.add(sandbox)
+                session.commit()
+                session.refresh(sandbox)
+                return sandbox
+
+    def update_sandbox(self, sandbox_id: int, data: Dict[str, Any], repo_id: Optional[str] = None) -> Sandbox:
+        with self._lock:
+            with self._with_session() as session:
+                statement = select(Sandbox).where(Sandbox.id == sandbox_id)
+                if repo_id:
+                    statement = statement.where(Sandbox.repo_id == repo_id)
+                sandbox = session.exec(statement).first()
+                if not sandbox:
+                    raise ValueError(f"Sandbox {sandbox_id} not found")
+                updated = False
+                for field, value in data.items():
+                    if value is None or not hasattr(sandbox, field):
+                        continue
+                    setattr(sandbox, field, value)
+                    updated = True
+                if updated:
+                    sandbox.updated_at = datetime.utcnow()
+                session.add(sandbox)
+                session.commit()
+                session.refresh(sandbox)
+                return sandbox
