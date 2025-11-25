@@ -15,6 +15,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http.models import PointStruct, Filter, FieldCondition, MatchValue
 import requests
 import sys, logging
+from dotenv import load_dotenv
 # 강제로 stdout 플러시
 print(">>> TEST PRINT <<<", flush=True)
 
@@ -29,6 +30,17 @@ logger = logging.getLogger(__name__)
 logger.info(">>> TEST LOGGER <<<")
 logger = logging.getLogger(__name__)
 
+# Load environment variables early so chunk limits pick them up.
+load_dotenv()
+
+# Heuristic limits to keep embedding requests under the model's context window.
+CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "512"))
+CHARS_PER_TOKEN_EST = float(os.getenv("CHARS_PER_TOKEN_EST", "1.5"))
+CHUNK_LINES = int(os.getenv("CHUNK_LINES", "120"))
+CHUNK_TOKEN_FRACTION = float(os.getenv("CHUNK_TOKEN_FRACTION", "0.6"))
+# Cap characters per chunk using a conservative chars-per-token estimate; enforce a sensible floor.
+MAX_CONTENT_CHARS = max(256, int(CHUNK_TOKENS * CHUNK_TOKEN_FRACTION * CHARS_PER_TOKEN_EST))
+
 # Optional Tree-sitter
 _TS_AVAILABLE = False
 try:
@@ -37,6 +49,10 @@ try:
     _TS_AVAILABLE = True
 except Exception:
     _TS_AVAILABLE = False
+
+# Qdrant client knobs
+QDRANT_UPSERT_BATCH = max(1, int(os.getenv("QDRANT_UPSERT_BATCH", "128")))
+QDRANT_TIMEOUT = float(os.getenv("QDRANT_TIMEOUT", "30"))
 
 # ----------------------- utils -----------------------
 def sha256(data: bytes) -> str:
@@ -121,7 +137,7 @@ class Embeddings:
 class VectorStore:
     def __init__(self, collection: str, url: str, api_key: Optional[str] = None, dim: Optional[int] = None):
         self.collection = collection
-        self.client = QdrantClient(url=url, api_key=api_key)
+        self.client = QdrantClient(url=url, api_key=api_key, timeout=QDRANT_TIMEOUT)
         self.is_new = False
         try:
             self.client.get_collection(collection_name=collection)
@@ -136,7 +152,12 @@ class VectorStore:
             self.is_new = True
 
     def upsert(self, point_id: str, vector: List[float], payload: Dict[str, Any]):
-        self.client.upsert(collection_name=self.collection, points=[PointStruct(id=point_id, vector=vector, payload=payload)])
+        self.upsert_points([PointStruct(id=point_id, vector=vector, payload=payload)])
+
+    def upsert_points(self, points: List[PointStruct], batch_size: int = QDRANT_UPSERT_BATCH):
+        batch = max(1, batch_size)
+        for i in range(0, len(points), batch):
+            self.client.upsert(collection_name=self.collection, points=points[i:i + batch])
 
     def set_payload(self, point_ids: List[str], payload: Dict[str, Any]):
         self.client.set_payload(collection_name=self.collection, payload=payload, points=point_ids)
@@ -155,7 +176,24 @@ class VectorStore:
 # ----------------------- git CLI wrapper -----------------------
 class GitCLI:
     def __init__(self, repo_path: str):
-        self.repo_path = repo_path
+        # Normalize to an absolute path so Git's safe.directory check matches exactly.
+        self.repo_path = os.path.abspath(repo_path)
+        self._ensure_repo_marked_safe()
+
+    def _ensure_repo_marked_safe(self) -> None:
+        """Make sure Git trusts this repository path."""
+        try:
+            subprocess.check_output(
+                ["git", "config", "--global", "--add", "safe.directory", self.repo_path],
+                stderr=subprocess.STDOUT,
+                timeout=10,
+            )
+        except FileNotFoundError:
+            raise RuntimeError("`git` CLI not found. Install Git or run in an environment with Git available.")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("git command timeout while marking safe.directory")
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"failed to mark git safe.directory: {e.output.decode('utf-8', errors='ignore')}")
 
     def _run(self, *args: str) -> str:
         try:
@@ -394,6 +432,9 @@ _TS_NODE_TYPES = {
     "python": ["class_definition", "function_definition", "decorated_definition"], # 👈 Python 추가
 }
 
+# Extensions we intentionally skip during chunking (binary Excel files, etc.).
+_SKIP_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".xlsb"}
+
 class Chunker:
     @staticmethod
     def for_language(path: str) -> str:
@@ -404,6 +445,11 @@ class Chunker:
         """
         메인 청킹 진입점: Tree-sitter를 우선 사용하고, 실패 시 generic_chunks로 폴백합니다.
         """
+        ext = os.path.splitext(path)[1].lower()
+        if ext in _SKIP_EXTENSIONS:
+            logger.info("Skipping chunking for unsupported binary file type: %s", path)
+            return []
+
         lang = Chunker.for_language(path)
         
         # 1. Tree-sitter 사용 가능하고, 해당 언어를 지원하는 경우
@@ -417,11 +463,14 @@ class Chunker:
     # ----------------------- py_chunks 제거됨 -----------------------
 
     @staticmethod
-    def ts_chunks(src: str, path: str, repo: str, lang: str, max_content_chars: int = 20000) -> List[Chunk]:
+    def ts_chunks(src: str, path: str, repo: str, lang: str, max_content_chars: int = MAX_CONTENT_CHARS) -> List[Chunk]:
         if not _TS_AVAILABLE or lang not in _TS_NODE_TYPES:
             # 이 코드는 Chunker.chunks에서 이미 걸러지지만, 방어 코드로 유지
             return Chunker.generic_chunks(src, path, repo)
         
+        # Guard against misconfiguration that would produce empty chunks.
+        max_content_chars = max(256, max_content_chars or MAX_CONTENT_CHARS)
+
         try:
             language = get_language(lang)
         except Exception as e:
@@ -538,7 +587,8 @@ class Chunker:
             return Chunker.generic_chunks(src, path, repo)
             
     @staticmethod
-    def generic_chunks(src: str, path: str, repo: str, lines_per_chunk: int = 120, max_content_chars: int = 7000) -> List[Chunk]:
+    def generic_chunks(src: str, path: str, repo: str, lines_per_chunk: int = CHUNK_LINES, max_content_chars: int = MAX_CONTENT_CHARS) -> List[Chunk]:
+        max_content_chars = max(256, max_content_chars or MAX_CONTENT_CHARS)
         out = []
         lines = src.splitlines(True)
         i = 0
@@ -670,7 +720,7 @@ class Indexer:
             texts = [c.content for c in to_embed]
             vectors = self.emb.embed(texts)
             points = [PointStruct(id=self._build_payload(c, branch, head)["point_id"], vector=v, payload=self._build_payload(c, branch, head)) for c, v in zip(to_embed, vectors)]
-            self.store.client.upsert(collection_name=self.collection, points=points)
+            self.store.upsert_points(points)
 
     def index_commit(self, base: str, head: Optional[str] = None, branch: str = "main"):
         commit_sha = head or base  # For local mode, use base commit
@@ -768,8 +818,8 @@ class Indexer:
                     if olds:
                         self.store.set_payload([p.id for p in olds], {"is_latest": False})
                     payload = self._build_payload(c, branch, commit_sha)
-                    points.append(PointStruct(id=self._build_payload(c, branch, head)["point_id"], vector=v, payload=payload))
-                self.store.client.upsert(collection_name=self.collection, points=points)
+                    points.append(PointStruct(id=payload["point_id"], vector=v, payload=payload))
+                self.store.upsert_points(points)
             if to_update_only_pos:
                 ids = [p.id for _, olds in [(None, self.store.scroll_by_logical(ch.logical_id, is_latest=True)) for ch, _ in to_update_only_pos] for p in olds if olds]
                 if ids:

@@ -107,7 +107,7 @@ def _generate_full_index_progress(request: Request, repo_id: str):
                         payload = indexer._build_payload(c, config.BRANCH, head)
                         points.append(PointStruct(id=payload["point_id"], vector=v, payload=payload))
                     if points:
-                        store_client.client.upsert(collection_name=repo_entry.collection_name, points=points)
+                        store_client.upsert_points(points)
 
                     processed += 1
                     yield json.dumps(
@@ -324,7 +324,7 @@ def _generate_update_index_progress(request: Request, repo_id: str):
                     payload = indexer._build_payload(chunk, config.BRANCH, commit_sha)
                     points.append(PointStruct(id=payload["point_id"], vector=vector, payload=payload))
                 if points:
-                    store_client.client.upsert(collection_name=repo_entry.collection_name, points=points)
+                    store_client.upsert_points(points)
 
             if to_update_only_pos:
                 for chunk, translated in to_update_only_pos:
