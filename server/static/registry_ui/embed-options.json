@@ -1,0 +1,6 @@
+[
+  "BAAI/bge-small-en-v1.5",
+  "BAAI/bge-base-en-v1.5",
+  "text-embedding-3-small",
+  "text-embedding-3-large"
+]

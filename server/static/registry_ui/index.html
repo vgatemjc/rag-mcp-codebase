@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Registry UI</title>
+    <link rel="stylesheet" href="/static/registry_ui/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Git RAG Registry</p>
+          <h1>Repository registry UI</h1>
+          <p class="lede">
+            Preview and create registry entries without crafting curl by hand.
+          </p>
+        </div>
+        <div class="meta-callout" id="status-message">Loading configuration…</div>
+      </header>
+
+      <section class="panel">
+        <h2>Repository details</h2>
+        <form id="registry-form">
+          <div class="field-grid">
+            <label>
+              <span>Repository ID *</span>
+              <input id="repo_id" name="repo_id" required placeholder="example-repo" />
+            </label>
+            <label>
+              <span>Name</span>
+              <input id="name" name="name" placeholder="Friendly display name" />
+            </label>
+            <label>
+              <span>URL</span>
+              <input id="url" name="url" placeholder="https://github.com/org/repo" />
+            </label>
+            <label>
+              <span>Collection</span>
+              <input id="collection_name" name="collection_name" placeholder="defaults to app collection" />
+            </label>
+            <label>
+              <span>Embedding model</span>
+              <input
+                id="embedding_model"
+                name="embedding_model"
+                list="embedding-options"
+                placeholder="defaults to app model"
+              />
+              <datalist id="embedding-options"></datalist>
+            </label>
+            <label>
+              <span>Last indexed commit</span>
+              <input id="last_indexed_commit" name="last_indexed_commit" placeholder="optional commit sha" />
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit">Preview payload</button>
+            <button type="button" id="create-btn" class="secondary">Create registry entry</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel columns">
+        <div>
+          <h3>App defaults</h3>
+          <dl id="config-meta" class="meta-list"></dl>
+          <div class="stack">
+            <div>
+              <p class="label">Embedding options</p>
+              <ul id="embedding-list" class="pill-list"></ul>
+            </div>
+            <div>
+              <p class="label">Qdrant collections</p>
+              <ul id="collection-list" class="pill-list"></ul>
+            </div>
+          </div>
+        </div>
+        <div>
+          <h3>Registered repositories</h3>
+          <div id="registry-list" class="registry-grid"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Preview</h3>
+        <p class="note">
+          Preview runs the same normalization logic as create but does not write to the registry.
+        </p>
+        <pre id="preview-output" class="code-block">Submit the form to see a preview.</pre>
+        <h4>Curl</h4>
+        <pre id="curl-output" class="code-block">curl snippet appears after preview.</pre>
+      </section>
+
+      <section class="panel">
+        <h3>Latest response</h3>
+        <pre id="create-output" class="code-block">Registry responses will appear here.</pre>
+      </section>
+    </main>
+    <script src="/static/registry_ui/app.js"></script>
+  </body>
+</html>

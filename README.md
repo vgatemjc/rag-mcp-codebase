@@ -44,8 +44,13 @@ This repository bundles a lightweight Retrieval-Augmented Generation stack: a Fa
 ## Repository Registry
 - The FastAPI service exposes `/registry` endpoints backed by `server/services/repository_registry.py` (SQLite + SQLModel). Use them to register repositories, archive/delete entries, or ingest GitHub webhooks before indexing runs.
 - API routers now live in `server/routers/` (`registry_router.py`, `index_router.py`, `status_router.py`, `search_router.py`) and are wired inside `server/app.py`.
+- A minimal UI lives at `/registry/ui`, served from `server/static/registry_ui/` (mount path `/static`). The UI pulls `/registry/ui/meta` for defaults/options, hits `/registry/preview` for dry-run normalization, then POSTs to `/registry` to create entries.
+- `/registry/ui/meta` returns config defaults (`QDRANT_URL`, `EMB_BASE_URL`, `EMB_MODEL`, `COLLECTION`, `REPOS_DIR`), current registry entries, embedding options (from `server/static/registry_ui/embed-options.json` when present), and Qdrant collections (fails open with an empty list).
+- Quick preview→create flow (inside the rag container):  
+  `curl -X POST -H "Content-Type: application/json" http://localhost:8000/registry/preview -d '{"repo_id":"demo"}'`  
+  then `curl -X POST -H "Content-Type: application/json" http://localhost:8000/registry -d '{"repo_id":"demo"}'`
 - Each indexing/search call resolves its repo metadata through the registry and initializes embedding/Qdrant clients lazily via `server/services/initializers.py`, ensuring per-repository collections stay isolated.
-- After touching the registry or router flows, run tests via docker compose (`docker compose -f docker-compose.rag.yml run --rm rag-server pytest tests/test_repository_registry.py`) plus the end-to-end indexing script (`docker compose -f docker-compose.rag.yml run --rm rag-server python server/test_git_rag_api.py`). For bare-host smoke tests, ensure the embedding/Qdrant compose stack is already running, or set `SKIP_COLLECTION_INIT=1` only when intentionally skipping those dependencies.
+- After touching the registry or router flows, run tests via docker compose (`docker compose -f docker-compose.rag.yml run --rm rag-server pytest tests/test_repository_registry.py tests/test_registry_ui.py`) plus the end-to-end indexing script (`docker compose -f docker-compose.rag.yml run --rm rag-server python server/test_git_rag_api.py`). For bare-host smoke tests, ensure the embedding/Qdrant compose stack is already running, or set `SKIP_COLLECTION_INIT=1` only when intentionally skipping those dependencies.
 
 ## Contributor Guide
 

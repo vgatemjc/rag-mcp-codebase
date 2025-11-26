@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+from server.config import Config
 from server.models.repository import (
     RegistryWebhook,
     RepositoryIn,
@@ -25,6 +26,19 @@ def _sandboxes(request: Request) -> SandboxManager:
     return request.app.state.sandbox_manager
 
 
+def _config(request: Request) -> Config:
+    return request.app.state.config
+
+
+def normalize_repository_payload(config: Config, payload: RepositoryIn) -> dict:
+    """Align repository defaults for preview/create flows."""
+    data = payload.model_dump()
+    data["name"] = data.get("name") or payload.repo_id
+    data["collection_name"] = data.get("collection_name") or config.COLLECTION
+    data["embedding_model"] = data.get("embedding_model") or config.EMB_MODEL
+    return data
+
+
 @router.get("", response_model=List[RepositoryOut])
 def list_registry_entries(request: Request, include_archived: bool = False):
     entries = _registry(request).list_repositories(include_archived=include_archived)
@@ -41,8 +55,9 @@ def get_registry_entry(request: Request, repo_id: str):
 
 @router.post("", response_model=RepositoryOut)
 def create_registry_entry(request: Request, payload: RepositoryIn):
+    normalized_payload = normalize_repository_payload(_config(request), payload)
     try:
-        repo = _registry(request).create_repository(payload.model_dump())
+        repo = _registry(request).create_repository(normalized_payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return RepositoryOut.model_validate(repo)
@@ -61,6 +76,13 @@ def update_registry_entry(request: Request, repo_id: str, payload: RepositoryUpd
 def delete_registry_entry(request: Request, repo_id: str):
     _registry(request).delete_repository(repo_id)
     return
+
+
+@router.post("/preview")
+def preview_registry_entry(request: Request, payload: RepositoryIn):
+    """Dry-run normalization for UI curl preview; does not persist."""
+    normalized_payload = normalize_repository_payload(_config(request), payload)
+    return {"target": "/registry", "payload": normalized_payload}
 
 
 @router.post("/webhook", response_model=Optional[RepositoryOut])
