@@ -27,8 +27,11 @@ class Config:
     DIM: Optional[int] = field(default_factory=lambda: int(os.getenv("DIM", "0")) or None)
     BRANCH: str = field(default_factory=lambda: os.getenv("GIT_BRANCH", "main"))
     SKIP_COLLECTION_INIT: bool = field(default_factory=lambda: False)
+    EXPOSE_MCP_UI: bool = field(default_factory=lambda: True)
+    MCP_MODULE: str = field(default_factory=lambda: os.getenv("MCP_MODULE", "server.git_rag_mcp"))
 
     def __post_init__(self) -> None:
         self.SKIP_COLLECTION_INIT = os.getenv("SKIP_COLLECTION_INIT", "0").lower() in {"1", "true", "yes"}
+        self.EXPOSE_MCP_UI = os.getenv("EXPOSE_MCP_UI", "1").lower() in {"1", "true", "yes"}
         model_slug = re.sub(r"[^a-z0-9]+", "", self.EMB_MODEL.lower())
         self.COLLECTION = f"git_rag-{self.ENV}-{model_slug}"

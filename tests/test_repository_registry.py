@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import importlib
 import os
 from pathlib import Path
@@ -30,10 +32,17 @@ def test_repository_registry_crud(tmp_path):
     registry.update_last_indexed_commit("demo", "abc123")
     refreshed = registry.get_repository("demo")
     assert refreshed.last_indexed_commit == "abc123"
+    assert refreshed.last_index_status == "completed"
 
     registry.archive_repository("demo", archived=True)
     archived = registry.get_repository("demo")
     assert archived.archived is True
+
+    now = datetime.utcnow()
+    registry.update_index_status("demo", status="running", mode="full", started_at=now)
+    refreshed = registry.get_repository("demo")
+    assert refreshed.last_index_status == "running"
+    assert refreshed.last_index_mode == "full"
 
     registry.delete_repository("demo")
     assert registry.get_repository("demo") is None
@@ -64,6 +73,12 @@ def test_registry_router_crud(tmp_path, monkeypatch):
     resp = client.put("/registry/sample", json={"archived": True})
     assert resp.status_code == 200
     assert resp.json()["archived"] is True
+
+    resp = client.get("/repos/sample/index/status")
+    assert resp.status_code == 200
+    status = resp.json()
+    assert status["repo_id"] == "sample"
+    assert status["last_indexed_commit"] is None
 
     webhook_payload = {
         "action": "push",

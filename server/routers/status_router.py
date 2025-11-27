@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from server.config import Config
+from server.models.index import IndexStatus
 from server.models.status import StatusResponse
 from server.services.git_aware_code_indexer import GitCLI
 from server.services.repository_registry import RepositoryRegistry
@@ -67,3 +68,26 @@ def get_local_status(request: Request, repo_id: str):
         return StatusResponse(modified=modified, added=added, deleted=deleted, renamed=renamed)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/{repo_id}/index/status", response_model=IndexStatus)
+def get_index_status(request: Request, repo_id: str):
+    config = _config(request)
+    registry = _registry(request)
+    defaults = {
+        "name": repo_id,
+        "collection_name": config.COLLECTION,
+        "embedding_model": config.EMB_MODEL,
+    }
+    repo = registry.ensure_repository(repo_id, defaults)
+
+    return IndexStatus(
+        repo_id=repo.repo_id,
+        last_indexed_commit=repo.last_indexed_commit,
+        last_indexed_at=repo.last_indexed_at,
+        last_index_mode=repo.last_index_mode,
+        last_index_status=repo.last_index_status,
+        last_index_error=repo.last_index_error,
+        last_index_started_at=repo.last_index_started_at,
+        last_index_finished_at=repo.last_index_finished_at,
+    )

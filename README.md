@@ -29,6 +29,7 @@ This repository bundles a lightweight Retrieval-Augmented Generation stack: a Fa
   ```
 - The rag compose file automatically rewires these host exports into the container variables FastAPI expects, so you only maintain the provider-specific endpoints in one place.
 - Health check vs. embeddings note: the rag compose stack polls `${EMB_ENDPOINT}/health`. For vLLM, set `EMB_ENDPOINT` to the root (e.g., `http://localhost:8003`) because `/health` is served there even though embeddings are under `/v1/embeddings`. TEI keeps `/v1` in the endpoint (e.g., `http://localhost:8080/v1`) and serves `/v1/health`.
+- Set `EXPOSE_MCP_UI=0` to hide the MCP/dev UI routes in hardened environments; `MCP_MODULE` controls which MCP module to introspect (defaults to `server.git_rag_mcp`).
 
 ## Docker-Based Development Workflow
 1. Tear down both compose stacks before any significant refactor:  
@@ -51,6 +52,12 @@ This repository bundles a lightweight Retrieval-Augmented Generation stack: a Fa
   then `curl -X POST -H "Content-Type: application/json" http://localhost:8000/registry -d '{"repo_id":"demo"}'`
 - Each indexing/search call resolves its repo metadata through the registry and initializes embedding/Qdrant clients lazily via `server/services/initializers.py`, ensuring per-repository collections stay isolated.
 - After touching the registry or router flows, run tests via docker compose (`docker compose -f docker-compose.rag.yml run --rm rag-server pytest tests/test_repository_registry.py tests/test_registry_ui.py`) plus the end-to-end indexing script (`docker compose -f docker-compose.rag.yml run --rm rag-server python server/test_git_rag_api.py`). For bare-host smoke tests, ensure the embedding/Qdrant compose stack is already running, or set `SKIP_COLLECTION_INIT=1` only when intentionally skipping those dependencies.
+
+## Developer UI and MCP tools
+- A developer-focused UI lives at `/dev-ui` (served from `server/static/dev_ui/`). It lists registry entries, triggers full or incremental indexing, polls `/repos/{id}/index/status`, runs `/search`, and invokes MCP tools via `/mcp/tools`.
+- Index status metadata is persisted on each run (status, mode, started/finished timestamps, last indexed commit/error) and exposed through `/repos/{repo_id}/index/status`.
+- MCP endpoints: `GET /mcp/tools` lists available tools from `server/git_rag_mcp.py`, and `POST /mcp/tools/{name}` invokes a tool with a JSON `args` map. Disable both with `EXPOSE_MCP_UI=0` when not needed.
+- The UI reuses the `/static` mount already present in `server/app.py`; no extra bundling is required. Reload the registry list after adding or archiving repos to keep the dropdowns in sync.
 
 ## Contributor Guide
 

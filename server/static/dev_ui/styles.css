@@ -1,0 +1,260 @@
+:root {
+  --bg: #0c1116;
+  --panel: #111821;
+  --accent: #4cc9f0;
+  --text: #e3ecf2;
+  --muted: #9fb0c0;
+  --border: #1f2b3a;
+  --danger: #f38ba8;
+  --success: #7ce7a0;
+  --font: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--text);
+  background: radial-gradient(circle at 20% 20%, rgba(76, 201, 240, 0.08), transparent 25%),
+    radial-gradient(circle at 80% 0%, rgba(255, 255, 255, 0.04), transparent 35%), var(--bg);
+  min-height: 100vh;
+}
+
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 24px;
+  background: linear-gradient(120deg, rgba(76, 201, 240, 0.12), rgba(17, 24, 33, 0.9));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12px;
+  margin: 0 0 6px;
+}
+
+h1 {
+  margin: 0 0 8px;
+}
+
+.lede {
+  margin: 0;
+  color: var(--muted);
+  max-width: 720px;
+}
+
+.meta-callout {
+  background: #0b1b2a;
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  border-radius: 10px;
+  min-width: 220px;
+  text-align: right;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  margin-top: 18px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+button {
+  background: var(--accent);
+  color: #041019;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 0.08s ease, box-shadow 0.1s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(76, 201, 240, 0.25);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+label {
+  display: block;
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+label span {
+  display: block;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0b121a;
+  color: var(--text);
+  font-size: 14px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.grid.two-col {
+  grid-template-columns: 1fr 1fr;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th,
+td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+tr:hover td {
+  background: rgba(76, 201, 240, 0.05);
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge.success {
+  background: rgba(124, 231, 160, 0.12);
+  color: var(--success);
+}
+
+.badge.error {
+  background: rgba(243, 139, 168, 0.12);
+  color: var(--danger);
+}
+
+.badge.idle {
+  background: rgba(159, 176, 192, 0.12);
+  color: var(--muted);
+}
+
+.output {
+  background: #0a0f15;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  min-height: 120px;
+  max-height: 360px;
+  overflow: auto;
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px 10px;
+  margin: 0;
+  padding: 0;
+}
+
+.meta dt {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.meta dd {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.label {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.hint {
+  color: var(--muted);
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.selected-row {
+  outline: 2px solid rgba(76, 201, 240, 0.4);
+}

@@ -9,11 +9,14 @@ from fastapi.staticfiles import StaticFiles
 
 from server.config import Config
 from server.routers.index_router import router as index_router
+from server.routers.dev_ui import router as dev_ui_router
+from server.routers.mcp_router import router as mcp_router
 from server.routers.registry_router import router as registry_router
 from server.routers.registry_ui import router as registry_ui_router
 from server.routers.search_router import router as search_router
 from server.routers.status_router import router as status_router
 from server.services.initializers import Initializer
+from server.services.mcp_service import MCPService
 from server.services.repository_registry import RepositoryRegistry
 from server.services.sandbox_manager import SandboxManager
 
@@ -39,6 +42,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.registry = RepositoryRegistry()
     app.state.initializer = Initializer(cfg)
     app.state.sandbox_manager = SandboxManager(cfg.REPOS_DIR, cfg.BRANCH)
+    app.state.mcp_service = MCPService(cfg.MCP_MODULE) if cfg.EXPOSE_MCP_UI else None
 
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount(
@@ -47,10 +51,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         name="static",
     )  # Registry UI bundle and other static assets.
 
+    app.include_router(dev_ui_router)
     app.include_router(registry_ui_router)
     app.include_router(registry_router)
     app.include_router(index_router)
     app.include_router(status_router)
     app.include_router(search_router)
+    if cfg.EXPOSE_MCP_UI:
+        app.include_router(mcp_router)
 
     return app

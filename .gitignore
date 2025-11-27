@@ -25,3 +25,6 @@ server/services/__pycache__/
 !/docker-compose.rag.yml
 !/AGENTS.md
 !/README.md
+
+# Temp files from fuse/deleted handles
+server/services/.fuse_hidden*

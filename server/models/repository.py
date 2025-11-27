@@ -31,6 +31,12 @@ class RepositoryOut(BaseModel):
     collection_name: str
     embedding_model: str
     last_indexed_commit: Optional[str] = None
+    last_indexed_at: Optional[datetime] = None
+    last_index_mode: Optional[str] = None
+    last_index_status: Optional[str] = None
+    last_index_error: Optional[str] = None
+    last_index_started_at: Optional[datetime] = None
+    last_index_finished_at: Optional[datetime] = None
     archived: bool
     created_at: datetime
     updated_at: datetime

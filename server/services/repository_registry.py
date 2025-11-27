@@ -17,6 +17,12 @@ class Repository(SQLModel, table=True):
     collection_name: str
     embedding_model: str
     last_indexed_commit: Optional[str] = None
+    last_indexed_at: Optional[datetime] = None
+    last_index_mode: Optional[str] = None
+    last_index_status: Optional[str] = None
+    last_index_error: Optional[str] = None
+    last_index_started_at: Optional[datetime] = None
+    last_index_finished_at: Optional[datetime] = None
     archived: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
     updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
@@ -57,10 +63,30 @@ class RepositoryRegistry:
             db_file = f"sqlite:///{(base_dir / 'registry.db').as_posix()}"
         self.engine = create_engine(db_file, connect_args={"check_same_thread": False})
         SQLModel.metadata.create_all(self.engine)
+        self._ensure_schema()
         self._lock = threading.Lock()
 
     def _with_session(self):
         return Session(self.engine)
+
+    def _ensure_schema(self) -> None:
+        """Best-effort schema alignment for existing SQLite registries."""
+        if self.engine.url.get_backend_name() != "sqlite":
+            return
+        with self.engine.begin() as conn:
+            result = conn.exec_driver_sql("PRAGMA table_info(repository)")
+            existing_cols = {row[1] for row in result.fetchall()}
+            desired = {
+                "last_indexed_at": "DATETIME",
+                "last_index_mode": "VARCHAR(50)",
+                "last_index_status": "VARCHAR(50)",
+                "last_index_error": "TEXT",
+                "last_index_started_at": "DATETIME",
+                "last_index_finished_at": "DATETIME",
+            }
+            for col, ddl in desired.items():
+                if col not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE repository ADD COLUMN {col} {ddl}")
 
     def list_repositories(self, include_archived: bool = False) -> List[Repository]:
         with self._with_session() as session:
@@ -149,13 +175,39 @@ class RepositoryRegistry:
                 session.commit()
 
     def update_last_indexed_commit(self, repo_id: str, commit_sha: str) -> None:
+        self.update_index_status(repo_id, last_indexed_commit=commit_sha, status="completed")
+
+    def update_index_status(
+        self,
+        repo_id: str,
+        *,
+        last_indexed_commit: Optional[str] = None,
+        status: Optional[str] = None,
+        mode: Optional[str] = None,
+        started_at: Optional[datetime] = None,
+        finished_at: Optional[datetime] = None,
+        error: Optional[str] = None,
+    ) -> None:
         with self._lock:
             with self._with_session() as session:
                 repo = session.exec(select(Repository).where(Repository.repo_id == repo_id)).first()
                 if not repo:
                     return
-                repo.last_indexed_commit = commit_sha
-                repo.updated_at = datetime.utcnow()
+                now = datetime.utcnow()
+                if last_indexed_commit is not None:
+                    repo.last_indexed_commit = last_indexed_commit
+                if mode is not None:
+                    repo.last_index_mode = mode
+                if status is not None:
+                    repo.last_index_status = status
+                if started_at is not None:
+                    repo.last_index_started_at = started_at
+                if finished_at is not None:
+                    repo.last_index_finished_at = finished_at
+                    repo.last_indexed_at = finished_at
+                if error is not None:
+                    repo.last_index_error = error
+                repo.updated_at = now
                 session.add(repo)
                 session.commit()
 

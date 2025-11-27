@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import List
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -73,6 +74,7 @@ def _generate_full_index_progress(request: Request, repo_id: str):
     registry = _registry(request)
     initializer = _initializer(request)
 
+    start_time = datetime.utcnow()
     try:
         repo_entry = _ensure_repo_registry_entry(request, repo_id)
         sync_state_with_registry(config.STATE_FILE, repo_id, repo_entry.last_indexed_commit)
@@ -84,6 +86,13 @@ def _generate_full_index_progress(request: Request, repo_id: str):
         files = indexer.git.list_files(head)
         total_files = len(files)
         processed = 0
+        registry.update_index_status(
+            repo_id,
+            status="running",
+            mode="full",
+            started_at=start_time,
+            error=None,
+        )
 
         yield json.dumps(
             {
@@ -148,7 +157,13 @@ def _generate_full_index_progress(request: Request, repo_id: str):
         state = load_state(config.STATE_FILE)
         state[repo_id] = head
         save_state(config.STATE_FILE, state)
-        registry.update_last_indexed_commit(repo_id, head)
+        registry.update_index_status(
+            repo_id,
+            last_indexed_commit=head,
+            status="completed",
+            mode="full",
+            finished_at=datetime.utcnow(),
+        )
         yield json.dumps(
             {
                 "status": "completed",
@@ -160,6 +175,13 @@ def _generate_full_index_progress(request: Request, repo_id: str):
         ) + "\n"
         logger.info("Full index complete for %s", repo_id)
     except Exception as exc:
+        registry.update_index_status(
+            repo_id,
+            status="error",
+            mode="full",
+            error=str(exc),
+            finished_at=datetime.utcnow(),
+        )
         yield json.dumps({"status": "error", "message": str(exc)}) + "\n"
         logger.exception("Full index error for %s", repo_id)
 
@@ -169,6 +191,8 @@ def _generate_update_index_progress(request: Request, repo_id: str):
     registry = _registry(request)
     initializer = _initializer(request)
 
+    mode = "update"
+    start_time = datetime.utcnow()
     try:
         repo_entry = _ensure_repo_registry_entry(request, repo_id)
         sync_state_with_registry(config.STATE_FILE, repo_id, repo_entry.last_indexed_commit)
@@ -182,6 +206,13 @@ def _generate_update_index_progress(request: Request, repo_id: str):
         logger.info("Update Index: repo=%s base=%s head=%s", repo_id, base, head)
 
         if not base:
+            registry.update_index_status(
+                repo_id,
+                status="error",
+                mode="update",
+                error="No base commit found; run full index first.",
+                finished_at=datetime.utcnow(),
+            )
             yield json.dumps(
                 {"status": "error", "message": "No base commit found; run full index first.", "last_commit": head}
             ) + "\n"
@@ -211,6 +242,13 @@ def _generate_update_index_progress(request: Request, repo_id: str):
                 if len(line) >= 3 and (line[0] in status_letters or line[1] in status_letters)
             ]
             if not changed_paths:
+                registry.update_index_status(
+                    repo_id,
+                    status="noop",
+                    mode="working-tree",
+                    started_at=start_time,
+                    finished_at=datetime.utcnow(),
+                )
                 yield json.dumps(
                     {"status": "noop", "message": "No local changes detected", "last_commit": head}
                 ) + "\n"
@@ -220,6 +258,15 @@ def _generate_update_index_progress(request: Request, repo_id: str):
             commit_sha = base
             total_files = len(file_diffs)
             processed = 0
+            mode = "working-tree"
+
+        registry.update_index_status(
+            repo_id,
+            status="running",
+            mode=mode,
+            started_at=start_time,
+            error=None,
+        )
 
         yield json.dumps(
             {
@@ -346,7 +393,13 @@ def _generate_update_index_progress(request: Request, repo_id: str):
 
         state[repo_id] = head
         save_state(config.STATE_FILE, state)
-        registry.update_last_indexed_commit(repo_id, head)
+        registry.update_index_status(
+            repo_id,
+            last_indexed_commit=head,
+            status="completed",
+            mode=mode,
+            finished_at=datetime.utcnow(),
+        )
         yield json.dumps(
             {
                 "status": "completed",
@@ -357,6 +410,13 @@ def _generate_update_index_progress(request: Request, repo_id: str):
             }
         ) + "\n"
     except Exception as exc:
+        registry.update_index_status(
+            repo_id,
+            status="error",
+            mode=locals().get("mode", "update"),
+            error=str(exc),
+            finished_at=datetime.utcnow(),
+        )
         yield json.dumps(
             {"status": "error", "message": str(exc), "last_commit": locals().get("head")}
         ) + "\n"

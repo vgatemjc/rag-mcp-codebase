@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Developer UI - RAG + MCP</title>
+    <link rel="stylesheet" href="/static/dev_ui/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Git RAG Developer UI</p>
+          <h1>Registry, indexing, search, and MCP tools</h1>
+          <p class="lede">
+            Manage repositories, trigger indexing, run RAG searches, and call MCP tools without leaving the browser.
+          </p>
+        </div>
+        <div class="meta-callout" id="page-status">Loading…</div>
+      </header>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Registry</h2>
+          <div class="actions">
+            <button id="refresh-registry">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Repo</th>
+                <th>Collection</th>
+                <th>Model</th>
+                <th>Last indexed</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="registry-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Indexing</h2>
+          <div class="actions">
+            <select id="repo-picker" data-repo-select></select>
+          </div>
+        </div>
+        <div class="grid">
+          <div>
+            <p class="label">Actions</p>
+            <div class="button-row">
+              <button id="full-index">Full index</button>
+              <button id="update-index">Incremental</button>
+              <button id="fetch-status">Refresh status</button>
+            </div>
+            <p class="hint">Streaming responses are captured below. Incremental run falls back to working tree when no new commit.</p>
+          </div>
+          <div>
+            <p class="label">Index status</p>
+            <dl class="meta" id="index-status"></dl>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Search playground</h2>
+          <div class="actions">
+            <select id="search-repo" data-repo-select></select>
+          </div>
+        </div>
+        <form id="search-form" class="grid">
+          <label>
+            <span>Query</span>
+            <input id="search-query" required placeholder="e.g., background job scheduler" />
+          </label>
+          <label>
+            <span>Top K</span>
+            <input id="search-k" type="number" min="1" value="8" />
+          </label>
+          <div class="button-row">
+            <button type="submit">Run search</button>
+          </div>
+        </form>
+        <pre class="output" id="search-output"></pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>MCP tools</h2>
+          <div class="actions">
+            <button id="refresh-tools">Reload tools</button>
+          </div>
+        </div>
+        <div class="grid">
+          <label>
+            <span>Tool</span>
+            <select id="tool-picker"></select>
+          </label>
+          <label>
+            <span>Arguments (JSON)</span>
+            <textarea id="tool-args" rows="6" spellcheck="false" placeholder='{"repo": "example", "query": "search term"}'></textarea>
+          </label>
+          <div class="button-row">
+            <button id="invoke-tool">Invoke tool</button>
+          </div>
+        </div>
+        <pre class="output" id="tool-output"></pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Requests & responses</h2>
+          <div class="actions">
+            <button id="clear-logs">Clear</button>
+          </div>
+        </div>
+        <div class="grid two-col">
+          <div>
+            <p class="label">Last request</p>
+            <pre class="output" id="request-log"></pre>
+          </div>
+          <div>
+            <p class="label">Last response</p>
+            <pre class="output" id="response-log"></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="/static/dev_ui/app.js"></script>
+  </body>
+</html>
