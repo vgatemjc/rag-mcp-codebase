@@ -21,3 +21,12 @@
 ## Validation
 - Success criteria: all flows above are usable via the UI with clear error handling and no secret leakage.
 - Test plan: API coverage for new endpoints, manual UI smoke over `/dev-ui`, consider Playwright if automated UI tests are added.
+
+## Docker-based testing (from plans/docker-testing-workflow.md)
+- Tear down stale stacks first: `docker compose -f docker-compose.embedding.yml down && docker compose -f docker-compose.rag.yml down`.
+- Export env per profile: `QDRANT_ENDPOINT`, `EMB_ENDPOINT`, `EMB_MODEL`, `HOST_REPO_PATH`, `OLLAMA_ENDPOINT` (and optional `DIM`), then bring up embedding:  
+  `docker compose -f docker-compose.embedding.yml --profile tei up -d --build`
+- Start rag stack: `docker compose -f docker-compose.rag.yml up -d --build`.
+- Run registry/RAG UI tests in-container:  
+  `HOST_REPO_PATH="$(pwd)" QDRANT_ENDPOINT=http://localhost:6333 EMB_ENDPOINT=http://localhost:8080/v1 EMB_MODEL=BAAI/bge-small-en-v1.5 OLLAMA_ENDPOINT=http://localhost:11434 docker compose -f docker-compose.rag.yml run --rm rag-server sh -c "cd /workspace/myrepo && pytest tests/test_registry_ui.py tests/test_repository_registry.py"`
+- Optional end-to-end smoke: `docker compose -f docker-compose.rag.yml run --rm rag-server sh -c "cd /workspace/myrepo && python server/test_git_rag_api.py"`.
