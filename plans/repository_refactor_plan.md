@@ -1,5 +1,7 @@
 # Repository Unified Management & Sandbox Enhancement Plan
 
+> **Deprecated:** Superseded by more recent Dev UI/registry work. Keep for historical reference only; do not extend.
+
 Updated to reflect the post-`create_app` architecture while keeping the remaining sandbox/report work scoped.
 
 ## Architecture Snapshot (current)
