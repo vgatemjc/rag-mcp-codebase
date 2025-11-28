@@ -62,9 +62,13 @@ class RepositoryRegistry:
     def __init__(self, db_url: Optional[str] = None):
         db_file = db_url
         if not db_file:
-            base_dir = Path(os.getenv("REGISTRY_DB_DIR") or Path(__file__).resolve().parent)
-            base_dir.mkdir(parents=True, exist_ok=True)
-            db_file = f"sqlite:///{(base_dir / 'registry.db').as_posix()}"
+            explicit_path = os.getenv("REGISTRY_DB_PATH")
+            if explicit_path:
+                db_file = f"sqlite:///{Path(explicit_path).as_posix()}"
+            else:
+                base_dir = Path(os.getenv("REGISTRY_DB_DIR") or Path.home() / ".rag-registry")
+                base_dir.mkdir(parents=True, exist_ok=True)
+                db_file = f"sqlite:///{(base_dir / 'registry.db').as_posix()}"
         self.engine = create_engine(db_file, connect_args={"check_same_thread": False})
         SQLModel.metadata.create_all(self.engine)
         self._ensure_schema()
