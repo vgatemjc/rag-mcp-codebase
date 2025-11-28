@@ -54,6 +54,21 @@ except Exception:
 QDRANT_UPSERT_BATCH = max(1, int(os.getenv("QDRANT_UPSERT_BATCH", "128")))
 QDRANT_TIMEOUT = float(os.getenv("QDRANT_TIMEOUT", "30"))
 
+def _is_probably_binary(data: bytes, sample_size: int = 8000, control_threshold: float = 0.3) -> bool:
+    """
+    Lightweight binary detector: flags content with NUL bytes or a high ratio of
+    control characters. Keeps UTF-8 text (including non-ASCII) from being
+    treated as binary.
+    """
+    if not data:
+        return False
+    if b"\x00" in data:
+        return True
+    sample = data[:sample_size]
+    allowed_ctrl = {9, 10, 13}  # tab, newline, carriage return
+    control_bytes = sum(1 for b in sample if b < 32 and b not in allowed_ctrl)
+    return (control_bytes / max(1, len(sample))) > control_threshold
+
 # ----------------------- utils -----------------------
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -218,16 +233,24 @@ class GitCLI:
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"failed to mark git safe.directory: {e.output.decode('utf-8', errors='ignore')}")
 
-    def _run(self, *args: str) -> str:
+    def _run_bytes(self, *args: str) -> bytes:
         try:
-            out = subprocess.check_output(["git", "--no-pager", *args], cwd=self.repo_path, stderr=subprocess.STDOUT, timeout=60)
-            return out.decode("utf-8", errors="ignore")
+            return subprocess.check_output(
+                ["git", "--no-pager", *args],
+                cwd=self.repo_path,
+                stderr=subprocess.STDOUT,
+                timeout=60,
+            )
         except FileNotFoundError:
             raise RuntimeError("`git` CLI not found. Install Git or run in an environment with Git available.")
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"git command timeout: {' '.join(args)}")
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"git command failed: {' '.join(args)}\n{e.output.decode('utf-8', errors='ignore')}")
+
+    def _run(self, *args: str) -> str:
+        out = self._run_bytes(*args)
+        return out.decode("utf-8", errors="ignore")
 
     def diff_unified_0(self, base: str, head: str) -> str:
         return self._run("diff", f"{base}..{head}", "--unified=0", "--ignore-blank-lines", "--ignore-space-at-eol", "--no-color")
@@ -247,13 +270,17 @@ class GitCLI:
                          "--", 
                          *paths) # paths 리스트의 각 요소를 개별 인자로 전달
 
-    def show_file(self, commit: str, path: str) -> Optional[str]:
+    def show_file(self, commit: Optional[str], path: str) -> Optional[str]:
         # 1. 로컬 모드: Working Tree에서 파일 읽기 (commit is None)
         if commit is None:
             full_path = os.path.join(self.repo_path, path)
             try:
-                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                    return f.read()
+                with open(full_path, "rb") as f:
+                    raw = f.read()
+                if _is_probably_binary(raw):
+                    logger.info("Skipping binary working tree file: %s", path)
+                    return None
+                return raw.decode("utf-8", errors="ignore")
             except FileNotFoundError:
                 return None
             except RuntimeError:
@@ -264,7 +291,11 @@ class GitCLI:
         # 2. 커밋/참조 모드: Git 히스토리에서 파일 읽기 (commit is not None)
         else:
             try:
-                return self._run("show", f"{commit}:{path}")
+                raw = self._run_bytes("show", f"{commit}:{path}")
+                if _is_probably_binary(raw):
+                    logger.info("Skipping binary file from commit %s: %s", commit, path)
+                    return None
+                return raw.decode("utf-8", errors="ignore")
             except RuntimeError as e:
                 # _run이 Git 명령 실패 시 RuntimeError를 발생시킨다고 가정합니다.
                 error_message = str(e).lower()
