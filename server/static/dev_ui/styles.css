@@ -180,6 +180,11 @@ tr:hover td {
   background: rgba(76, 201, 240, 0.05);
 }
 
+td.actions {
+  display: flex;
+  gap: 8px;
+}
+
 .badge {
   display: inline-block;
   padding: 4px 8px;

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -118,12 +119,25 @@ class MCPService:
             return [self._safe_json(item) for item in value]
         return repr(value)
 
+    def _parse_json_text(self, value: Optional[str]) -> Any:
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            return json.loads(value)
+        except Exception:
+            return None
+
     async def invoke_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         func = self._resolve_tool(name)
         real_func = getattr(func, "__wrapped__", func)
         sig = inspect.signature(real_func)
+        normalized_args = args or {}
+        if "repo_id" in sig.parameters and "repo" in normalized_args and "repo_id" not in normalized_args:
+            normalized_args = {**normalized_args, "repo_id": normalized_args.get("repo")}
+        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
+        filtered_args = normalized_args if accepts_kwargs else {k: v for k, v in normalized_args.items() if k in sig.parameters}
         try:
-            bound = sig.bind(**(args or {}))
+            bound = sig.bind(**filtered_args)
         except TypeError as exc:
             raise ValueError(f"Invalid arguments for tool '{name}': {exc}") from exc
         bound.apply_defaults()
@@ -133,11 +147,23 @@ class MCPService:
         finished_at = datetime.utcnow()
         duration_ms = int((finished_at - started_at).total_seconds() * 1000)
 
+        content_type = None
+        if isinstance(result, TextContent):
+            content_type = result.type or "text"
+        text_out = self._extract_text(result)
+        raw_result = self._safe_json(result)
+        parsed_json = raw_result if isinstance(raw_result, (dict, list)) else self._parse_json_text(text_out)
+
         return {
             "tool": name,
             "started_at": started_at,
             "finished_at": finished_at,
             "duration_ms": duration_ms,
-            "output_text": self._extract_text(result),
-            "raw_result": self._safe_json(result),
+            "output_text": text_out,
+            "raw_result": raw_result,
+            "parsed_json": parsed_json,
+            "content_type": content_type or "text",
+            "stdout": text_out,
+            "stderr": None,
+            "success": True,
         }

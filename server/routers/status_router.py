@@ -90,4 +90,7 @@ def get_index_status(request: Request, repo_id: str):
         last_index_error=repo.last_index_error,
         last_index_started_at=repo.last_index_started_at,
         last_index_finished_at=repo.last_index_finished_at,
+        last_index_total_files=repo.last_index_total_files,
+        last_index_processed_files=repo.last_index_processed_files,
+        last_index_current_file=repo.last_index_current_file,
     )

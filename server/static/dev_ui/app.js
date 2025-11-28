@@ -3,6 +3,7 @@
     repos: [],
     tools: [],
     selectedRepo: localStorage.getItem("dev-ui:selected-repo") || "",
+    indexPoll: null,
   };
 
   const els = {
@@ -36,6 +37,22 @@
     return dt.toLocaleString();
   };
 
+  const pretty = (value) => {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") {
+      try {
+        return JSON.stringify(JSON.parse(value), null, 2);
+      } catch (_) {
+        return value;
+      }
+    }
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (_) {
+      return String(value);
+    }
+  };
+
   const badge = (status) => {
     if (!status) return '<span class="badge idle">idle</span>';
     const normalized = status.toLowerCase();
@@ -52,15 +69,7 @@
 
   const setOutput = (el, payload) => {
     if (!el) return;
-    if (typeof payload === "string") {
-      el.textContent = payload;
-      return;
-    }
-    try {
-      el.textContent = JSON.stringify(payload, null, 2);
-    } catch (_) {
-      el.textContent = String(payload);
-    }
+    el.textContent = pretty(payload);
   };
 
   const logRequest = (method, url, body) => {
@@ -84,6 +93,40 @@
       }
     }
     return parsed;
+  };
+
+  const streamIndexResponse = async (res) => {
+    const events = [];
+    if (!res.body || !res.body.getReader) {
+      const bodyText = await res.text();
+      return parseIndexStream(bodyText);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines.filter((l) => l.trim())) {
+        try {
+          events.push(JSON.parse(line));
+        } catch (_) {
+          events.push({ raw: line });
+        }
+        setOutput(els.responseLog, events.slice(-50));
+      }
+    }
+    if (buffer.trim()) {
+      try {
+        events.push(JSON.parse(buffer));
+      } catch (_) {
+        events.push({ raw: buffer });
+      }
+    }
+    return events;
   };
 
   const highlightRepo = () => {
@@ -129,11 +172,33 @@
             <td>${repo.embedding_model}</td>
             <td>${indexed}</td>
             <td>${badge(repo.last_index_status)}</td>
-            <td><button data-select="${repo.repo_id}">Use</button></td>
+            <td class="actions"><button data-select="${repo.repo_id}">Use</button><button data-delete="${repo.repo_id}">Delete</button></td>
           </tr>`;
       })
       .join("");
     renderRepoSelects();
+  };
+
+  const deleteRepo = async (repoId) => {
+    const confirmed = confirm(`Delete registry entry '${repoId}'? This does not touch the repo files.`);
+    if (!confirmed) return;
+    logRequest("DELETE", `/registry/${repoId}`);
+    setStatus(`Deleting ${repoId}…`);
+    try {
+      const res = await fetch(`/registry/${encodeURIComponent(repoId)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+      logResponse({ status: res.status, body: "deleted" });
+      if (state.selectedRepo === repoId) {
+        state.selectedRepo = "";
+        localStorage.removeItem("dev-ui:selected-repo");
+        els.indexStatus.innerHTML = "";
+      }
+      await fetchRegistry();
+      setStatus(`Deleted ${repoId}`);
+    } catch (err) {
+      setStatus(err.message);
+      logResponse({ error: err.message });
+    }
   };
 
   const selectRepo = (repoId) => {
@@ -144,6 +209,7 @@
       fetchIndexStatus();
     } else {
       els.indexStatus.innerHTML = "";
+      stopIndexPolling();
     }
   };
 
@@ -171,6 +237,17 @@
       els.indexStatus.innerHTML = "";
       return;
     }
+    const toNumber = (value) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+    const total = toNumber(payload.last_index_total_files);
+    const processed = toNumber(payload.last_index_processed_files);
+    const percent = total && processed !== null && total > 0 ? Math.floor((processed / total) * 100) : null;
+    const progressText =
+      total !== null && processed !== null
+        ? `${processed}/${total}${percent !== null ? ` (${percent}%)` : ""}`
+        : processed !== null
+          ? `${processed}`
+          : "—";
+    const currentFile = payload.last_index_current_file || "—";
     els.indexStatus.innerHTML = `
       <dt>Repo</dt><dd>${payload.repo_id}</dd>
       <dt>Status</dt><dd>${badge(payload.last_index_status)}</dd>
@@ -180,18 +257,46 @@
       <dt>Finished</dt><dd>${fmtDate(payload.last_index_finished_at)}</dd>
       <dt>Indexed at</dt><dd>${fmtDate(payload.last_indexed_at)}</dd>
       <dt>Error</dt><dd>${payload.last_index_error || "—"}</dd>
+      <dt>Progress</dt><dd>${progressText}</dd>
+      <dt>Current file</dt><dd>${currentFile}</dd>
     `;
   };
 
+  const stopIndexPolling = () => {
+    if (state.indexPoll) {
+      clearInterval(state.indexPoll);
+      state.indexPoll = null;
+    }
+  };
+
+  const startIndexPolling = () => {
+    if (state.indexPoll || !state.selectedRepo) return;
+    state.indexPoll = setInterval(fetchIndexStatus, 2000);
+  };
+
+  const syncIndexPolling = (statusValue) => {
+    const normalized = (statusValue || "").toLowerCase();
+    if (normalized === "running") {
+      startIndexPolling();
+    } else {
+      stopIndexPolling();
+    }
+  };
+
   const fetchIndexStatus = async () => {
-    if (!state.selectedRepo) return;
+    if (!state.selectedRepo) {
+      stopIndexPolling();
+      return;
+    }
     try {
       const res = await fetch(`/repos/${encodeURIComponent(state.selectedRepo)}/index/status`);
       if (!res.ok) throw new Error(`Status load failed (${res.status})`);
       const data = await res.json();
       renderIndexStatus(data);
+      syncIndexPolling(data.last_index_status);
     } catch (err) {
       renderIndexStatus({ repo_id: state.selectedRepo, last_index_status: "error", last_index_error: err.message });
+      stopIndexPolling();
     }
   };
 
@@ -208,15 +313,16 @@
     }
     toggleIndexButtons(true);
     logRequest("POST", `/repos/${state.selectedRepo}/index/${mode}`);
+    startIndexPolling();
     try {
       const res = await fetch(`/repos/${encodeURIComponent(state.selectedRepo)}/index/${mode}`, { method: "POST" });
-      const bodyText = await res.text();
-      const parsed = parseIndexStream(bodyText);
-      logResponse({ status: res.status, body: parsed });
+      const events = await streamIndexResponse(res);
+      logResponse({ status: res.status, body: events });
       await fetchRegistry();
       await fetchIndexStatus();
     } catch (err) {
       logResponse({ error: err.message });
+      stopIndexPolling();
     } finally {
       toggleIndexButtons(false);
     }
@@ -252,22 +358,49 @@
       return;
     }
     const defaults = {};
-    tool.parameters.forEach((param) => {
+    const paramNames = new Set();
+    (tool.parameters || []).forEach((param) => {
+      paramNames.add(param.name);
       if (param.default !== undefined && param.default !== null) {
         defaults[param.name] = param.default;
       } else if (param.required) {
         defaults[param.name] = "";
       }
     });
-    if (!defaults.repo && state.selectedRepo) {
-      defaults.repo = state.selectedRepo;
+    if (state.selectedRepo) {
+      if (paramNames.has("repo") && defaults.repo === undefined) {
+        defaults.repo = state.selectedRepo;
+      }
+      if (paramNames.has("repo_id") && defaults.repo_id === undefined) {
+        defaults.repo_id = state.selectedRepo;
+      }
     }
     els.toolArgs.value = JSON.stringify(defaults, null, 2);
+  };
+
+  const formatToolOutput = (payload) => {
+    if (!payload) return "";
+    const parts = [];
+    if (payload.tool) parts.push(`tool: ${payload.tool}`);
+    if (payload.duration_ms !== undefined) parts.push(`duration_ms: ${payload.duration_ms}`);
+    if (payload.content_type) parts.push(`content_type: ${payload.content_type}`);
+    if (payload.output_text) parts.push(`output:\n${payload.output_text}`);
+    if (payload.parsed_json) parts.push(`parsed_json:\n${pretty(payload.parsed_json)}`);
+    if (!payload.parsed_json && payload.raw_result !== undefined) {
+      parts.push(`raw_result:\n${pretty(payload.raw_result)}`);
+    }
+    if (payload.stderr) parts.push(`stderr:\n${payload.stderr}`);
+    return parts.join("\n\n");
+  };
+
+  const setToolOutput = (payload) => {
+    els.toolOutput.textContent = formatToolOutput(payload) || pretty(payload);
   };
 
   const renderTools = () => {
     if (!state.tools.length) {
       els.toolPicker.innerHTML = `<option value="">No tools available</option>`;
+      els.toolArgs.value = "{}";
       return;
     }
     els.toolPicker.innerHTML = state.tools
@@ -298,6 +431,8 @@
       alert("Pick a tool first.");
       return;
     }
+    const tool = state.tools.find((t) => t.name === toolName);
+    const paramNames = new Set((tool?.parameters || []).map((p) => p.name));
     let args;
     try {
       args = els.toolArgs.value ? JSON.parse(els.toolArgs.value) : {};
@@ -305,20 +440,39 @@
       alert("Arguments must be valid JSON.");
       return;
     }
-    logRequest("POST", `/mcp/tools/${toolName}`, { args });
+    const normalizedArgs = paramNames.size ? {} : { ...args };
+    if (paramNames.size) {
+      Object.entries(args || {}).forEach(([key, value]) => {
+        if (paramNames.has(key)) {
+          normalizedArgs[key] = value;
+        }
+      });
+      if (state.selectedRepo) {
+        if (paramNames.has("repo") && normalizedArgs.repo === undefined) {
+          normalizedArgs.repo = state.selectedRepo;
+        }
+        if (paramNames.has("repo_id") && normalizedArgs.repo_id === undefined) {
+          normalizedArgs.repo_id = state.selectedRepo;
+        }
+      }
+    }
+    logRequest("POST", `/mcp/tools/${toolName}`, { args: normalizedArgs });
     els.invokeTool.disabled = true;
     try {
       const res = await fetch(`/mcp/tools/${encodeURIComponent(toolName)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args }),
+        body: JSON.stringify({ args: normalizedArgs }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || `Tool failed (${res.status})`);
+      }
       logResponse({ status: res.status, body: data });
-      setOutput(els.toolOutput, data);
+      setToolOutput(data);
     } catch (err) {
       logResponse({ error: err.message });
-      setOutput(els.toolOutput, err.message);
+      setToolOutput({ error: err.message });
     } finally {
       els.invokeTool.disabled = false;
     }
@@ -329,6 +483,8 @@
       const target = evt.target;
       if (target instanceof HTMLElement && target.dataset.select) {
         selectRepo(target.dataset.select);
+      } else if (target instanceof HTMLElement && target.dataset.delete) {
+        deleteRepo(target.dataset.delete);
       }
     });
     els.registryRefresh.addEventListener("click", fetchRegistry);

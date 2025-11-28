@@ -43,6 +43,21 @@ def test_repository_registry_crud(tmp_path):
     refreshed = registry.get_repository("demo")
     assert refreshed.last_index_status == "running"
     assert refreshed.last_index_mode == "full"
+    assert refreshed.last_index_total_files is None
+
+    registry.update_index_status(
+        "demo",
+        status="running",
+        mode="full",
+        started_at=now,
+        total_files=10,
+        processed_files=2,
+        current_file="demo.py",
+    )
+    refreshed = registry.get_repository("demo")
+    assert refreshed.last_index_total_files == 10
+    assert refreshed.last_index_processed_files == 2
+    assert refreshed.last_index_current_file == "demo.py"
 
     registry.delete_repository("demo")
     assert registry.get_repository("demo") is None
@@ -79,6 +94,8 @@ def test_registry_router_crud(tmp_path, monkeypatch):
     status = resp.json()
     assert status["repo_id"] == "sample"
     assert status["last_indexed_commit"] is None
+    assert status["last_index_total_files"] is None
+    assert status["last_index_processed_files"] is None
 
     webhook_payload = {
         "action": "push",

@@ -37,6 +37,9 @@ class RepositoryOut(BaseModel):
     last_index_error: Optional[str] = None
     last_index_started_at: Optional[datetime] = None
     last_index_finished_at: Optional[datetime] = None
+    last_index_total_files: Optional[int] = None
+    last_index_processed_files: Optional[int] = None
+    last_index_current_file: Optional[str] = None
     archived: bool
     created_at: datetime
     updated_at: datetime

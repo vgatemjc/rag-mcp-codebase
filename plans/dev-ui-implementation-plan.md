@@ -32,3 +32,17 @@
 - Add short doc (`docs/dev-ui.md` or README section) describing routes, expected env vars, and how to open `/dev-ui`.
 - Mirror any new config flag in `.env.example` and `server/config.yaml`.
 - Note docker-compose validation flow: bring up embedding stack, start rag stack, run registry/RAG tests, then manual UI smoke at `http://localhost:8000/dev-ui`.
+
+# feedback from developer
+- full index시 progress를 보여주지 않음
+- mcp tool의 response가 plain text가 나오는데 text formatting이 필요함.
+- repo_tree_md의 결과가 다음과 같이 이슈가 있음.
+{
+  "detail": "Invalid arguments for tool 'repo_tree_md': got an unexpected keyword argument 'repo'"
+}
+- list_mcp_tools의 결과가 다음과 같은 이슈가 있음.
+{
+  "detail": "Invalid arguments for tool 'list_mcp_tools': got an unexpected keyword argument 'repo'"
+}
+
+Feedback triaged; detailed response plan captured in `plans/dev-ui-feedback-plan.md`.

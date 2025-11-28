@@ -92,6 +92,9 @@ def _generate_full_index_progress(request: Request, repo_id: str):
             mode="full",
             started_at=start_time,
             error=None,
+            total_files=total_files,
+            processed_files=0,
+            current_file=None,
         )
 
         yield json.dumps(
@@ -119,6 +122,14 @@ def _generate_full_index_progress(request: Request, repo_id: str):
                         store_client.upsert_points(points)
 
                     processed += 1
+                    registry.update_index_status(
+                        repo_id,
+                        status="running",
+                        mode="full",
+                        processed_files=processed,
+                        total_files=total_files,
+                        current_file=path,
+                    )
                     yield json.dumps(
                         {
                             "status": "processing",
@@ -131,6 +142,14 @@ def _generate_full_index_progress(request: Request, repo_id: str):
                     ) + "\n"
                 else:
                     processed += 1
+                    registry.update_index_status(
+                        repo_id,
+                        status="running",
+                        mode="full",
+                        processed_files=processed,
+                        total_files=total_files,
+                        current_file=path,
+                    )
                     yield json.dumps(
                         {
                             "status": "processing",
@@ -143,6 +162,14 @@ def _generate_full_index_progress(request: Request, repo_id: str):
                     ) + "\n"
             else:
                 processed += 1
+                registry.update_index_status(
+                    repo_id,
+                    status="running",
+                    mode="full",
+                    processed_files=processed,
+                    total_files=total_files,
+                    current_file=path,
+                )
                 yield json.dumps(
                     {
                         "status": "processing",
@@ -163,6 +190,9 @@ def _generate_full_index_progress(request: Request, repo_id: str):
             status="completed",
             mode="full",
             finished_at=datetime.utcnow(),
+            total_files=total_files,
+            processed_files=processed,
+            current_file=None,
         )
         yield json.dumps(
             {
@@ -181,6 +211,7 @@ def _generate_full_index_progress(request: Request, repo_id: str):
             mode="full",
             error=str(exc),
             finished_at=datetime.utcnow(),
+            current_file=None,
         )
         yield json.dumps({"status": "error", "message": str(exc)}) + "\n"
         logger.exception("Full index error for %s", repo_id)
@@ -266,6 +297,9 @@ def _generate_update_index_progress(request: Request, repo_id: str):
             mode=mode,
             started_at=start_time,
             error=None,
+            total_files=total_files,
+            processed_files=0,
+            current_file=None,
         )
 
         yield json.dumps(
@@ -300,6 +334,14 @@ def _generate_update_index_progress(request: Request, repo_id: str):
                         logger.error("Failed to remove deleted file %s: %s", fd.path, exc)
 
                 processed += 1
+                registry.update_index_status(
+                    repo_id,
+                    status="running",
+                    mode=mode,
+                    processed_files=processed,
+                    total_files=total_files,
+                    current_file=fd.path,
+                )
                 yield json.dumps(
                     {
                         "status": "processing",
@@ -315,6 +357,14 @@ def _generate_update_index_progress(request: Request, repo_id: str):
             head_src = indexer.git.show_file(head if base != head else None, fd.path) or ""
             if not head_src:
                 processed += 1
+                registry.update_index_status(
+                    repo_id,
+                    status="running",
+                    mode=mode,
+                    processed_files=processed,
+                    total_files=total_files,
+                    current_file=fd.path,
+                )
                 yield json.dumps(
                     {
                         "status": "processing",
@@ -380,6 +430,14 @@ def _generate_update_index_progress(request: Request, repo_id: str):
                         store_client.set_payload([p.id for p in olds], {"lines": [translated.start_line, translated.end_line]})
 
             processed += 1
+            registry.update_index_status(
+                repo_id,
+                status="running",
+                mode=mode,
+                processed_files=processed,
+                total_files=total_files,
+                current_file=fd.path,
+            )
             yield json.dumps(
                 {
                     "status": "processing",
@@ -399,6 +457,9 @@ def _generate_update_index_progress(request: Request, repo_id: str):
             status="completed",
             mode=mode,
             finished_at=datetime.utcnow(),
+            total_files=total_files,
+            processed_files=processed,
+            current_file=None,
         )
         yield json.dumps(
             {
@@ -416,6 +477,7 @@ def _generate_update_index_progress(request: Request, repo_id: str):
             mode=locals().get("mode", "update"),
             error=str(exc),
             finished_at=datetime.utcnow(),
+            current_file=None,
         )
         yield json.dumps(
             {"status": "error", "message": str(exc), "last_commit": locals().get("head")}

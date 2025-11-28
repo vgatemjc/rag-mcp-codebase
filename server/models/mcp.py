@@ -30,3 +30,8 @@ class MCPInvokeResponse(BaseModel):
     duration_ms: int
     output_text: Optional[str] = None
     raw_result: Any = None
+    parsed_json: Any = None
+    content_type: str = "text"
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+    success: bool = True

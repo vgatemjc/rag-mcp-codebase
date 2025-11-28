@@ -54,7 +54,7 @@ This repository bundles a lightweight Retrieval-Augmented Generation stack: a Fa
 - After touching the registry or router flows, run tests via docker compose (`docker compose -f docker-compose.rag.yml run --rm rag-server pytest tests/test_repository_registry.py tests/test_registry_ui.py`) plus the end-to-end indexing script (`docker compose -f docker-compose.rag.yml run --rm rag-server python server/test_git_rag_api.py`). For bare-host smoke tests, ensure the embedding/Qdrant compose stack is already running, or set `SKIP_COLLECTION_INIT=1` only when intentionally skipping those dependencies.
 
 ## Developer UI and MCP tools
-- A developer-focused UI lives at `/dev-ui` (served from `server/static/dev_ui/`). It lists registry entries, triggers full or incremental indexing, polls `/repos/{id}/index/status`, runs `/search`, and invokes MCP tools via `/mcp/tools`.
+- A developer-focused UI lives at `/dev-ui` (served from `server/static/dev_ui/`). It lists registry entries, supports deleting a registry row, triggers full or incremental indexing, polls `/repos/{id}/index/status`, runs `/search`, and invokes MCP tools via `/mcp/tools`.
 - Index status metadata is persisted on each run (status, mode, started/finished timestamps, last indexed commit/error) and exposed through `/repos/{repo_id}/index/status`.
 - MCP endpoints: `GET /mcp/tools` lists available tools from `server/git_rag_mcp.py`, and `POST /mcp/tools/{name}` invokes a tool with a JSON `args` map. Disable both with `EXPOSE_MCP_UI=0` when not needed.
 - The UI reuses the `/static` mount already present in `server/app.py`; no extra bundling is required. Reload the registry list after adding or archiving repos to keep the dropdowns in sync.

@@ -23,6 +23,9 @@ class Repository(SQLModel, table=True):
     last_index_error: Optional[str] = None
     last_index_started_at: Optional[datetime] = None
     last_index_finished_at: Optional[datetime] = None
+    last_index_total_files: Optional[int] = None
+    last_index_processed_files: Optional[int] = None
+    last_index_current_file: Optional[str] = None
     archived: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
     updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
@@ -83,6 +86,9 @@ class RepositoryRegistry:
                 "last_index_error": "TEXT",
                 "last_index_started_at": "DATETIME",
                 "last_index_finished_at": "DATETIME",
+                "last_index_total_files": "INTEGER",
+                "last_index_processed_files": "INTEGER",
+                "last_index_current_file": "TEXT",
             }
             for col, ddl in desired.items():
                 if col not in existing_cols:
@@ -187,6 +193,9 @@ class RepositoryRegistry:
         started_at: Optional[datetime] = None,
         finished_at: Optional[datetime] = None,
         error: Optional[str] = None,
+        total_files: Optional[int] = None,
+        processed_files: Optional[int] = None,
+        current_file: Optional[str] = None,
     ) -> None:
         with self._lock:
             with self._with_session() as session:
@@ -207,6 +216,12 @@ class RepositoryRegistry:
                     repo.last_indexed_at = finished_at
                 if error is not None:
                     repo.last_index_error = error
+                if total_files is not None:
+                    repo.last_index_total_files = total_files
+                if processed_files is not None:
+                    repo.last_index_processed_files = processed_files
+                if current_file is not None:
+                    repo.last_index_current_file = current_file
                 repo.updated_at = now
                 session.add(repo)
                 session.commit()
