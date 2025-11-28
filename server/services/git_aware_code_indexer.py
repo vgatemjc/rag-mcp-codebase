@@ -7,7 +7,7 @@ import json
 import hashlib
 import subprocess
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Protocol
 import uuid
 from openai import OpenAI
 
@@ -48,7 +48,7 @@ try:
     from tree_sitter_languages import get_language
     _TS_AVAILABLE = True
 except Exception:
-    _TS_AVAILABLE = False
+_TS_AVAILABLE = False
 
 # Qdrant client knobs
 QDRANT_UPSERT_BATCH = max(1, int(os.getenv("QDRANT_UPSERT_BATCH", "128")))
@@ -86,6 +86,29 @@ class Chunk:
 
 # TEI 서버의 최대 배치 크기 (로그에서 64로 확인됨)
 EMBEDDING_BATCH_SIZE = 32
+
+
+class PayloadPlugin(Protocol):
+    """Hook to attach stack- or domain-specific fields to a chunk payload."""
+
+    def build_payload(self, chunk: Chunk, branch: str, commit_sha: str) -> Dict[str, Any]:
+        ...
+
+
+class ChunkPlugin(Protocol):
+    """Hook to customize chunking for specific stacks or file types."""
+
+    def supports(self, path: str, stack_type: Optional[str] = None) -> bool:
+        ...
+
+    def preprocess(self, src: str, path: str, repo: str) -> str:
+        return src
+
+    def postprocess(self, chunks: List[Chunk], path: str, repo: str) -> List[Chunk]:
+        return chunks
+
+    def extra_chunks(self, src: str, path: str, repo: str) -> List[Chunk]:
+        return []
 
 class Embeddings:
     def __init__(self, base_url: str, model: str, api_key: str = ""):
@@ -441,7 +464,13 @@ class Chunker:
         return _EXT_TO_LANG.get(os.path.splitext(path)[1].lower(), "generic")
 
     @staticmethod
-    def chunks(src: str, path: str, repo: str) -> List[Chunk]:
+    def chunks(
+        src: str,
+        path: str,
+        repo: str,
+        stack_type: Optional[str] = None,
+        plugins: Optional[List[ChunkPlugin]] = None,
+    ) -> List[Chunk]:
         """
         메인 청킹 진입점: Tree-sitter를 우선 사용하고, 실패 시 generic_chunks로 폴백합니다.
         """
@@ -450,15 +479,39 @@ class Chunker:
             logger.info("Skipping chunking for unsupported binary file type: %s", path)
             return []
 
+        plugins = plugins or []
+
+        # Allow plugins to preprocess source (e.g., normalize XML) when they claim support.
+        pre_src = src
+        for plugin in plugins:
+            try:
+                if plugin.supports(path, stack_type):
+                    pre_src = plugin.preprocess(pre_src, path, repo)
+            except Exception:
+                logger.exception("chunk plugin preprocess failed for %s", path)
+
         lang = Chunker.for_language(path)
         
         # 1. Tree-sitter 사용 가능하고, 해당 언어를 지원하는 경우
         if _TS_AVAILABLE and lang in _TS_NODE_TYPES:
             # ts_chunks 내부에서 오류를 처리하고 generic_chunks로 안전하게 폴백합니다.
-            return Chunker.ts_chunks(src, path, repo, lang)
-        
-        # 2. Tree-sitter를 사용할 수 없거나 지원하지 않는 언어인 경우
-        return Chunker.generic_chunks(src, path, repo)
+            chunks = Chunker.ts_chunks(pre_src, path, repo, lang)
+        else:
+            # 2. Tree-sitter를 사용할 수 없거나 지원하지 않는 언어인 경우
+            chunks = Chunker.generic_chunks(pre_src, path, repo)
+
+        # Plugin post-processing and extra chunks.
+        for plugin in plugins:
+            try:
+                if plugin.supports(path, stack_type):
+                    chunks = plugin.postprocess(chunks, path, repo)
+                    extra = plugin.extra_chunks(pre_src, path, repo)
+                    if extra:
+                        chunks.extend(extra)
+            except Exception:
+                logger.exception("chunk plugin postprocess failed for %s", path)
+
+        return chunks
 
     # ----------------------- py_chunks 제거됨 -----------------------
 
@@ -682,13 +735,28 @@ class Relocalizer:
 
 # ----------------------- indexer -----------------------
 class Indexer:
-    def __init__(self, repo_path: str, repo_name: str, embeddings: Embeddings, store: VectorStore, collection: str):
+    def __init__(
+        self,
+        repo_path: str,
+        repo_name: str,
+        embeddings: Embeddings,
+        store: VectorStore,
+        collection: str,
+        payload_plugins: Optional[List[PayloadPlugin]] = None,
+        base_payload: Optional[Dict[str, Any]] = None,
+        chunk_plugins: Optional[List[ChunkPlugin]] = None,
+        stack_type: Optional[str] = None,
+    ):
         self.repo_path = repo_path
         self.repo_name = repo_name
         self.emb = embeddings
         self.store = store
         self.collection = collection
         self.git = GitCLI(repo_path)
+        self.payload_plugins = payload_plugins or []
+        self.base_payload = base_payload or {}
+        self.chunk_plugins = chunk_plugins or []
+        self.stack_type = stack_type
 
     def _build_payload(self, c: Chunk, branch: str, commit_sha: str) -> Dict[str, Any]:
         unique_identifier = f"{c.logical_id}:{c.content_hash}"
@@ -705,7 +773,17 @@ class Indexer:
             "neighbors": c.neighbors, "block_id": c.block_id,
             "block_lines": [c.block_range.start_line, c.block_range.end_line] if c.block_range else None,
             "block_byte_range": [c.block_range.byte_start, c.block_range.byte_end] if c.block_range else None,
+            **self.base_payload,
         }
+        for plugin in self.payload_plugins:
+            try:
+                extra = plugin.build_payload(c, branch, commit_sha)
+            except Exception:
+                logger.exception("payload plugin failed for %s", c.path)
+                continue
+            if extra:
+                payload.update(extra)
+        return payload
 
     def full_index(self, head: str, branch: str = "main"):
         files = self.git.list_files(head)
@@ -715,7 +793,15 @@ class Indexer:
             head_src = self.git.show_file(head, path) or ""
             logger.debug(f"full index head src {head_src}")
             if head_src:
-                to_embed.extend(Chunker.chunks(head_src, path, self.repo_name))
+                to_embed.extend(
+                    Chunker.chunks(
+                        head_src,
+                        path,
+                        self.repo_name,
+                        stack_type=self.stack_type,
+                        plugins=self.chunk_plugins,
+                    )
+                )
         if to_embed:
             texts = [c.content for c in to_embed]
             vectors = self.emb.embed(texts)
@@ -780,7 +866,16 @@ class Indexer:
                 continue
             try:
                 # [수정 코멘트: Chunking 오류 방지] 구문 분석 오류 발생 시 로깅 후 다음 파일로 넘어감
-                head_chunks = {c.symbol: c for c in Chunker.chunks(head_src, fd.path, self.repo_name)}
+                head_chunks = {
+                    c.symbol: c
+                    for c in Chunker.chunks(
+                        head_src,
+                        fd.path,
+                        self.repo_name,
+                        stack_type=self.stack_type,
+                        plugins=self.chunk_plugins,
+                    )
+                }
                 logger.info(f"Successfully chunked {fd.path}. Chunks count: {len(head_chunks)}") # b 대신 성공 로그 표시
             except Exception as e:
                 logger.error(f"FATAL: Failed to chunk file {fd.path} due to: {e.__class__.__name__}: {e}")

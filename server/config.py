@@ -29,6 +29,7 @@ class Config:
     SKIP_COLLECTION_INIT: bool = field(default_factory=lambda: False)
     EXPOSE_MCP_UI: bool = field(default_factory=lambda: True)
     MCP_MODULE: str = field(default_factory=lambda: os.getenv("MCP_MODULE", "server.git_rag_mcp"))
+    STACK_TYPE: Optional[str] = field(default_factory=lambda: os.getenv("STACK_TYPE"))
 
     def __post_init__(self) -> None:
         self.SKIP_COLLECTION_INIT = os.getenv("SKIP_COLLECTION_INIT", "0").lower() in {"1", "true", "yes"}

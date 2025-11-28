@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import List
+from typing import List, Optional, Tuple
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -10,7 +10,8 @@ from fastapi.responses import StreamingResponse
 from qdrant_client.models import PointStruct
 
 from server.config import Config
-from server.services.git_aware_code_indexer import Chunker, DiffUtil, GitCLI, Indexer
+from server.services.git_aware_code_indexer import Chunker, DiffUtil, GitCLI, Indexer, ChunkPlugin, PayloadPlugin
+from server.services.android_plugins import AndroidChunkPlugin, AndroidPayloadPlugin
 from server.services.initializers import Initializer
 from server.services.repository_registry import Repository, RepositoryRegistry
 from server.services.state_manager import (
@@ -36,6 +37,12 @@ def _registry(request: Request) -> RepositoryRegistry:
 
 def _initializer(request: Request) -> Initializer:
     return request.app.state.initializer
+
+
+def _stack_plugins(stack_type: Optional[str]) -> Tuple[List[ChunkPlugin], List[PayloadPlugin], dict]:
+    if stack_type == "android_app":
+        return [AndroidChunkPlugin()], [AndroidPayloadPlugin(stack_type)], {"stack_type": stack_type}
+    return [], [], {}
 
 
 def _ensure_repo_registry_entry(request: Request, repo_id: str) -> Repository:
@@ -73,6 +80,8 @@ def _generate_full_index_progress(request: Request, repo_id: str):
     config = _config(request)
     registry = _registry(request)
     initializer = _initializer(request)
+    stack_type = getattr(config, "STACK_TYPE", None)
+    chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
 
     start_time = datetime.utcnow()
     try:
@@ -82,7 +91,17 @@ def _generate_full_index_progress(request: Request, repo_id: str):
         emb_client, store_client = initializer.resolve_clients(repo_entry.collection_name, repo_entry.embedding_model)
         git = GitCLI(str(repo_path))
         head = git.get_head()
-        indexer = Indexer(str(repo_path), repo_id, emb_client, store_client, repo_entry.collection_name)
+        indexer = Indexer(
+            str(repo_path),
+            repo_id,
+            emb_client,
+            store_client,
+            repo_entry.collection_name,
+            payload_plugins=payload_plugins,
+            base_payload=base_payload,
+            chunk_plugins=chunk_plugins,
+            stack_type=stack_type,
+        )
         files = indexer.git.list_files(head)
         total_files = len(files)
         processed = 0
@@ -110,7 +129,13 @@ def _generate_full_index_progress(request: Request, repo_id: str):
         for path in files:
             head_src = indexer.git.show_file(head, path) or ""
             if head_src:
-                file_chunks = Chunker.chunks(head_src, path, repo_id)
+                file_chunks = Chunker.chunks(
+                    head_src,
+                    path,
+                    repo_id,
+                    stack_type=stack_type,
+                    plugins=chunk_plugins,
+                )
                 if file_chunks:
                     texts = [c.content for c in file_chunks]
                     vectors = emb_client.embed(texts)
@@ -221,6 +246,8 @@ def _generate_update_index_progress(request: Request, repo_id: str):
     config = _config(request)
     registry = _registry(request)
     initializer = _initializer(request)
+    stack_type = getattr(config, "STACK_TYPE", None)
+    chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
 
     mode = "update"
     start_time = datetime.utcnow()
@@ -249,7 +276,17 @@ def _generate_update_index_progress(request: Request, repo_id: str):
             ) + "\n"
             return
 
-        indexer = Indexer(str(repo_path), repo_id, emb_client, store_client, repo_entry.collection_name)
+        indexer = Indexer(
+            str(repo_path),
+            repo_id,
+            emb_client,
+            store_client,
+            repo_entry.collection_name,
+            payload_plugins=payload_plugins,
+            base_payload=base_payload,
+            chunk_plugins=chunk_plugins,
+            stack_type=stack_type,
+        )
 
         if base != head:
             diff_text = indexer.git.diff_unified_0(base, head)
@@ -317,7 +354,16 @@ def _generate_update_index_progress(request: Request, repo_id: str):
                 base_src = indexer.git.show_file(base, fd.path) or ""
                 if base_src:
                     try:
-                        base_chunks = {c.symbol: c for c in Chunker.chunks(base_src, fd.path, repo_id)}
+                        base_chunks = {
+                            c.symbol: c
+                            for c in Chunker.chunks(
+                                base_src,
+                                fd.path,
+                                repo_id,
+                                stack_type=stack_type,
+                                plugins=chunk_plugins,
+                            )
+                        }
                         remove_ids = []
                         for _, ch in base_chunks.items():
                             olds = store_client.scroll_by_logical(ch.logical_id, is_latest=True)
@@ -378,7 +424,16 @@ def _generate_update_index_progress(request: Request, repo_id: str):
                 continue
 
             try:
-                head_chunks = {c.symbol: c for c in Chunker.chunks(head_src, fd.path, repo_id)}
+                head_chunks = {
+                    c.symbol: c
+                    for c in Chunker.chunks(
+                        head_src,
+                        fd.path,
+                        repo_id,
+                        stack_type=stack_type,
+                        plugins=chunk_plugins,
+                    )
+                }
             except Exception as exc:
                 processed += 1
                 yield json.dumps(
