@@ -42,6 +42,8 @@ def _initializer(request: Request) -> Initializer:
 def _stack_plugins(stack_type: Optional[str]) -> Tuple[List[ChunkPlugin], List[PayloadPlugin], dict]:
     if stack_type == "android_app":
         return [AndroidChunkPlugin()], [AndroidPayloadPlugin(stack_type)], {"stack_type": stack_type}
+    if stack_type:
+        return [], [], {"stack_type": stack_type}
     return [], [], {}
 
 
@@ -52,6 +54,7 @@ def _ensure_repo_registry_entry(request: Request, repo_id: str) -> Repository:
         "name": repo_id,
         "collection_name": config.COLLECTION,
         "embedding_model": config.EMB_MODEL,
+        "stack_type": getattr(config, "STACK_TYPE", None),
     }
     repo = registry.ensure_repository(repo_id, defaults)
     if repo.archived:
@@ -80,12 +83,12 @@ def _generate_full_index_progress(request: Request, repo_id: str):
     config = _config(request)
     registry = _registry(request)
     initializer = _initializer(request)
-    stack_type = getattr(config, "STACK_TYPE", None)
-    chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
 
     start_time = datetime.utcnow()
     try:
         repo_entry = _ensure_repo_registry_entry(request, repo_id)
+        stack_type = repo_entry.stack_type or getattr(config, "STACK_TYPE", None)
+        chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
         sync_state_with_registry(config.STATE_FILE, repo_id, repo_entry.last_indexed_commit)
         repo_path = get_repo_path(config.REPOS_DIR, repo_id)
         emb_client, store_client = initializer.resolve_clients(repo_entry.collection_name, repo_entry.embedding_model)
@@ -246,13 +249,13 @@ def _generate_update_index_progress(request: Request, repo_id: str):
     config = _config(request)
     registry = _registry(request)
     initializer = _initializer(request)
-    stack_type = getattr(config, "STACK_TYPE", None)
-    chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
 
     mode = "update"
     start_time = datetime.utcnow()
     try:
         repo_entry = _ensure_repo_registry_entry(request, repo_id)
+        stack_type = repo_entry.stack_type or getattr(config, "STACK_TYPE", None)
+        chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
         sync_state_with_registry(config.STATE_FILE, repo_id, repo_entry.last_indexed_commit)
         repo_path = get_repo_path(config.REPOS_DIR, repo_id)
         emb_client, store_client = initializer.resolve_clients(repo_entry.collection_name, repo_entry.embedding_model)

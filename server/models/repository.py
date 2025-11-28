@@ -10,6 +10,7 @@ class RepositoryIn(BaseModel):
     repo_id: str
     name: Optional[str] = None
     url: Optional[str] = None
+    stack_type: Optional[str] = None
     collection_name: Optional[str] = None
     embedding_model: Optional[str] = None
     last_indexed_commit: Optional[str] = None
@@ -18,6 +19,7 @@ class RepositoryIn(BaseModel):
 class RepositoryUpdate(BaseModel):
     name: Optional[str] = None
     url: Optional[str] = None
+    stack_type: Optional[str] = None
     collection_name: Optional[str] = None
     embedding_model: Optional[str] = None
     last_indexed_commit: Optional[str] = None
@@ -28,6 +30,7 @@ class RepositoryOut(BaseModel):
     repo_id: str
     name: str
     url: Optional[str] = None
+    stack_type: Optional[str] = None
     collection_name: str
     embedding_model: str
     last_indexed_commit: Optional[str] = None
@@ -52,5 +55,6 @@ class RegistryWebhook(BaseModel):
     repo_id: str
     name: Optional[str] = None
     url: Optional[str] = None
+    stack_type: Optional[str] = None
     collection_name: Optional[str] = None
     embedding_model: Optional[str] = None

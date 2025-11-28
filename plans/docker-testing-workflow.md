@@ -5,22 +5,21 @@
   - `docker-compose.embedding.yml` → Qdrant + embedding provider (TEI, vLLM, Ollama). Each provider gets its own service block and env vars (`EMB_BASE_URL`, `EMB_MODEL`, auth tokens).
   - `docker-compose.rag.yml` → FastAPI (`server.main:app`), MCP worker, web UI.
 - Shared `.env` supplies Qdrant/embedding URLs; rag compose only consumes the URLs, never launches infra services directly.
+- **Agent rule:** Do not touch the embedding compose stack during routine test runs. Assume embedding/Qdrant are already healthy; only operate on `docker-compose.rag.yml` unless explicitly told otherwise.
 
 ### 2. Refactor Workflow (pre / during / post)
 - **Pre-change cleanup**
-  - Always start by tearing down both stacks to avoid stale volumes, ports, or env mismatches:  
-    `docker compose -f docker-compose.embedding.yml down && docker compose -f docker-compose.rag.yml down`
+  - Leave the embedding stack running. Down only the rag stack if needed:  
+    `docker compose -f docker-compose.rag.yml down`
   - Re-export `.env` (or the profile-specific env file) so `QDRANT_ENDPOINT`, `EMB_ENDPOINT`, `HOST_REPO_PATH`, etc., are fresh in the shell before building images.
 - **During iteration**
   - Apply the code/config changes you’re testing.
-  - Rebuild and relaunch the infra stack with the desired embedding profile:  
-    `docker compose -f docker-compose.embedding.yml [--profile <tei|vllm-nvidia|...>] up -d --build`
-  - Once the embedding service health endpoint is responding, rebuild and start the rag/MCP stack:  
+  - Rebuild and start the rag/MCP stack only:  
     `docker compose -f docker-compose.rag.yml up -d --build`
   - Tail logs (`docker compose -f docker-compose.rag.yml logs -f rag-server`) when validating API changes.
 - **Post-run / repeat**
   - Run dockerized unit tests (see §3) plus any end-to-end checks needed for the change.
-  - When the next iteration begins, repeat the teardown step to reset the environment before rebuilding.
+  - When the next iteration begins, repeat the rag-stack teardown step if necessary; leave embedding services untouched unless instructed otherwise.
 
 ### 3. Unit Test Strategy (containerized)
 - **Image + entrypoint**
@@ -29,6 +28,8 @@
 - **Unit tests**
   - `docker compose -f docker-compose.rag.yml run --rm rag-server pytest tests/test_repository_registry.py`
   - Swap the final argument for other suites (`tests/` folder or individual files) and pass `PYTEST_ADDOPTS` for verbosity/fail-fast where needed.
+  - When running from an agent and tests are not baked into the image, mount them explicitly:  
+    `docker compose -f docker-compose.rag.yml run --rm -v $PWD/tests:/app/tests -v $PWD/pytest.ini:/app/pytest.ini rag-server pytest tests/...`
 - **End-to-end smoke test**
   - `docker compose -f docker-compose.rag.yml run --rm rag-server python server/test_git_rag_api.py`
 - **Environment requirements**

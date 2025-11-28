@@ -18,6 +18,7 @@ def test_repository_registry_crud(tmp_path):
         "demo",
         {
             "name": "Demo Repo",
+            "stack_type": "android_app",
             "collection_name": "demo-collection",
             "embedding_model": "demo-model",
         },
@@ -25,9 +26,11 @@ def test_repository_registry_crud(tmp_path):
     assert repo.repo_id == "demo"
     assert repo.collection_name == "demo-collection"
     assert repo.embedding_model == "demo-model"
+    assert repo.stack_type == "android_app"
 
-    updated = registry.update_repository("demo", {"name": "Updated Demo"})
+    updated = registry.update_repository("demo", {"name": "Updated Demo", "stack_type": "web"})
     assert updated.name == "Updated Demo"
+    assert updated.stack_type == "web"
 
     registry.update_last_indexed_commit("demo", "abc123")
     refreshed = registry.get_repository("demo")
@@ -75,11 +78,13 @@ def test_registry_router_crud(tmp_path, monkeypatch):
         "name": "Sample Repo",
         "collection_name": "sample-collection",
         "embedding_model": "sample-model",
+        "stack_type": "android_app",
     }
     resp = client.post("/registry", json=payload)
     assert resp.status_code == 200
     data = resp.json()
     assert data["repo_id"] == "sample"
+    assert data["stack_type"] == "android_app"
 
     resp = client.get("/registry/sample")
     assert resp.status_code == 200

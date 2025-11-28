@@ -14,6 +14,7 @@ class Repository(SQLModel, table=True):
     repo_id: str = Field(index=True, unique=True)
     name: str
     url: Optional[str] = None
+    stack_type: Optional[str] = Field(default=None, index=True)
     collection_name: str
     embedding_model: str
     last_indexed_commit: Optional[str] = None
@@ -89,6 +90,7 @@ class RepositoryRegistry:
                 "last_index_total_files": "INTEGER",
                 "last_index_processed_files": "INTEGER",
                 "last_index_current_file": "TEXT",
+                "stack_type": "VARCHAR(100)",
             }
             for col, ddl in desired.items():
                 if col not in existing_cols:
@@ -116,6 +118,7 @@ class RepositoryRegistry:
                 repo_id=repo_id,
                 name=defaults.get("name") or repo_id,
                 url=defaults.get("url"),
+                stack_type=defaults.get("stack_type"),
                 collection_name=defaults.get("collection_name") or defaults.get("collection") or "git_rag-default",
                 embedding_model=defaults.get("embedding_model") or defaults.get("model") or "text-embedding-3-large",
                 last_indexed_commit=defaults.get("last_indexed_commit"),
@@ -135,6 +138,7 @@ class RepositoryRegistry:
                 repo_id=data["repo_id"],
                 name=data.get("name") or data["repo_id"],
                 url=data.get("url"),
+                stack_type=data.get("stack_type"),
                 collection_name=data.get("collection_name") or data.get("collection") or "git_rag-default",
                 embedding_model=data.get("embedding_model") or data.get("model") or "text-embedding-3-large",
                 last_indexed_commit=data.get("last_indexed_commit"),
@@ -232,6 +236,7 @@ class RepositoryRegistry:
             defaults = {
                 "name": payload.get("name") or payload["repo_id"],
                 "url": payload.get("url"),
+                "stack_type": payload.get("stack_type"),
                 "collection_name": payload.get("collection_name"),
                 "embedding_model": payload.get("embedding_model"),
             }

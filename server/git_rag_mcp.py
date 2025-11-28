@@ -161,7 +161,15 @@ async def search_code(query: str, k: int = 8, repo: str | None = None):
         return TextContent(type="text", text=f"Error: {str(e)}")
 
 @mcp.tool()
-async def semantic_code_search(query: str, k: int = 8, repo: str | None = None):
+async def semantic_code_search(
+    query: str,
+    k: int = 8,
+    repo: str | None = None,
+    stack_type: str | None = None,
+    component_type: str | None = None,
+    screen_name: str | None = None,
+    tags: list[str] | None = None,
+):
     """
     Search the codebase for the *k* most semantically relevant snippets that match
     the given `query`. The request is forwarded to the RAG service and each result
@@ -181,6 +189,14 @@ async def semantic_code_search(query: str, k: int = 8, repo: str | None = None):
     repo : str | None, optional
         Restrict the search to a particular repository ID. If omitted,
         all repositories indexed by the RAG server are searched.
+    stack_type : str | None, optional
+        Optional stack hint (e.g., "android_app") to scope plugin filters.
+    component_type : str | None, optional
+        Filter to a specific component type when the stack supports it.
+    screen_name : str | None, optional
+        Filter to a particular screen/view name when provided by the stack plugin.
+    tags : list[str] | None, optional
+        Filter by any matching tag attached to chunks (e.g., "layout", "navgraph").
 
     Returns
     -------
@@ -190,10 +206,19 @@ async def semantic_code_search(query: str, k: int = 8, repo: str | None = None):
     """
     logger.info(f"called search_code : {query}")
     try:
+        payload = {"query": query, "repo_id": repo, "k": k}
+        if stack_type:
+            payload["stack_type"] = stack_type
+        if component_type:
+            payload["component_type"] = component_type
+        if screen_name:
+            payload["screen_name"] = screen_name
+        if tags:
+            payload["tags"] = tags
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{RAG_URL}/search",
-                json={"query": query, "repo_id": repo, "k": k}
+                json=payload,
             )
             resp.raise_for_status()
             results = resp.json()

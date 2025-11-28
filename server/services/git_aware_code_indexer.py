@@ -12,7 +12,7 @@ import uuid
 from openai import OpenAI
 
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.http.models import PointStruct, Filter, FieldCondition, MatchAny, MatchValue
 import requests
 import sys, logging
 from dotenv import load_dotenv
@@ -48,7 +48,7 @@ try:
     from tree_sitter_languages import get_language
     _TS_AVAILABLE = True
 except Exception:
-_TS_AVAILABLE = False
+    _TS_AVAILABLE = False
 
 # Qdrant client knobs
 QDRANT_UPSERT_BATCH = max(1, int(os.getenv("QDRANT_UPSERT_BATCH", "128")))
@@ -764,17 +764,27 @@ class Indexer:
         # Qdrant가 요구하는 UUID 형식의 ID를 생성하기 위해 UUID v5를 사용합니다. 
         # UUID v5는 입력 문자열(unique_identifier)이 동일하면 항상 동일한 UUID를 생성합니다.
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_identifier))
-        return {
+        payload = {
             "point_id": point_id,
-            "logical_id": c.logical_id, "repo": self.repo_name, "path": c.path, "symbol": c.symbol,
-            "branch": branch, "commit_sha": commit_sha, "content_hash": c.content_hash, "sig_hash": c.sig_hash,
-            "is_latest": True, "lines": [c.range.start_line, c.range.end_line],
-            "byte_range": [c.range.byte_start, c.range.byte_end], "language": c.language,
-            "neighbors": c.neighbors, "block_id": c.block_id,
+            "logical_id": c.logical_id,
+            "repo": self.repo_name,
+            "path": c.path,
+            "symbol": c.symbol,
+            "branch": branch,
+            "commit_sha": commit_sha,
+            "content_hash": c.content_hash,
+            "sig_hash": c.sig_hash,
+            "is_latest": True,
+            "lines": [c.range.start_line, c.range.end_line],
+            "byte_range": [c.range.byte_start, c.range.byte_end],
+            "language": c.language,
+            "neighbors": c.neighbors,
+            "block_id": c.block_id,
             "block_lines": [c.block_range.start_line, c.block_range.end_line] if c.block_range else None,
             "block_byte_range": [c.block_range.byte_start, c.block_range.byte_end] if c.block_range else None,
-            **self.base_payload,
         }
+        if self.base_payload:
+            payload.update(self.base_payload)
         for plugin in self.payload_plugins:
             try:
                 extra = plugin.build_payload(c, branch, commit_sha)
@@ -933,7 +943,17 @@ class Retriever:
         logger.info(f"repo path for Retriever {repo_path}")
 
 # [변경 코멘트: 함수 인자 오류 수정] repo 인자가 함수 정의에 누락되어 있습니다.
-    def search(self, query: str, k: int = 5, branch: str = "main", repo: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        k: int = 5,
+        branch: str = "main",
+        repo: Optional[str] = None,
+        stack_type: Optional[str] = None,
+        component_type: Optional[str] = None,
+        screen_name: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         vec = self.emb.embed([query])[0]
         
         # [변경 코멘트: 논리적 오류 수정] 필터 생성 로직이 두 번 반복되고 'repo: Optional[str] = None'이 필터 정의 내부에 잘못 삽입되어 있었습니다.
@@ -943,6 +963,14 @@ class Retriever:
         ]
         if repo:
             must_conditions.append(FieldCondition(key="repo", match=MatchValue(value=repo)))
+        if stack_type:
+            must_conditions.append(FieldCondition(key="stack_type", match=MatchValue(value=stack_type)))
+        if component_type:
+            must_conditions.append(FieldCondition(key="component_type", match=MatchValue(value=component_type)))
+        if screen_name:
+            must_conditions.append(FieldCondition(key="screen_name", match=MatchValue(value=screen_name)))
+        if tags:
+            must_conditions.append(FieldCondition(key="tags", match=MatchAny(any=sorted(set(tags)))))
 
         filt = Filter(must=must_conditions)
         

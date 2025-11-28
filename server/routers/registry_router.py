@@ -36,6 +36,7 @@ def normalize_repository_payload(config: Config, payload: RepositoryIn) -> dict:
     data["name"] = data.get("name") or payload.repo_id
     data["collection_name"] = data.get("collection_name") or config.COLLECTION
     data["embedding_model"] = data.get("embedding_model") or config.EMB_MODEL
+    data["stack_type"] = data.get("stack_type") or config.STACK_TYPE
     return data
 
 
