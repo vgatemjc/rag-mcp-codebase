@@ -7,7 +7,7 @@ import json
 import hashlib
 import subprocess
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Dict, Any, Protocol
+from typing import List, Tuple, Optional, Dict, Any, Protocol, TYPE_CHECKING
 import uuid
 from openai import OpenAI
 
@@ -127,6 +127,10 @@ class ChunkPlugin(Protocol):
 
     def extra_chunks(self, src: str, path: str, repo: str) -> List[Chunk]:
         return []
+
+
+if TYPE_CHECKING:
+    from server.services.edges import StructuralEdgePlugin
 
 class Embeddings:
     def __init__(self, base_url: str, model: str, api_key: str = ""):
@@ -780,6 +784,7 @@ class Indexer:
         base_payload: Optional[Dict[str, Any]] = None,
         chunk_plugins: Optional[List[ChunkPlugin]] = None,
         stack_type: Optional[str] = None,
+        edge_plugins: Optional[List["StructuralEdgePlugin"]] = None,
     ):
         self.repo_path = repo_path
         self.repo_name = repo_name
@@ -791,8 +796,11 @@ class Indexer:
         self.base_payload = base_payload or {}
         self.chunk_plugins = chunk_plugins or []
         self.stack_type = stack_type
+        self.edge_plugins = edge_plugins or []
 
     def _build_payload(self, c: Chunk, branch: str, commit_sha: str) -> Dict[str, Any]:
+        from server.services.edges.builder import dedupe_edges
+
         unique_identifier = f"{c.logical_id}:{c.content_hash}"
         # [변경 코멘트: Qdrant ID 최종 수정 (UUID 방식)] 
         # Qdrant가 요구하는 UUID 형식의 ID를 생성하기 위해 UUID v5를 사용합니다. 
@@ -817,6 +825,7 @@ class Indexer:
             "block_lines": [c.block_range.start_line, c.block_range.end_line] if c.block_range else None,
             "block_byte_range": [c.block_range.byte_start, c.block_range.byte_end] if c.block_range else None,
         }
+        edges: List[Dict[str, Any]] = []
         if self.base_payload:
             payload.update(self.base_payload)
         for plugin in self.payload_plugins:
@@ -826,7 +835,18 @@ class Indexer:
                 logger.exception("payload plugin failed for %s", c.path)
                 continue
             if extra:
+                if extra.get("edges"):
+                    edges.extend(extra["edges"])
                 payload.update(extra)
+        for plugin in getattr(self, "edge_plugins", []):
+            try:
+                plugin_edges = plugin.build_edges(c)
+                if plugin_edges:
+                    edges.extend(plugin_edges)
+            except Exception:
+                logger.exception("edge plugin failed for %s", c.path)
+        if edges:
+            payload["edges"] = dedupe_edges(edges + payload.get("edges", []))
         return payload
 
     def full_index(self, head: str, branch: str = "main"):

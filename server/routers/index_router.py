@@ -11,6 +11,7 @@ from qdrant_client.models import PointStruct
 
 from server.config import Config
 from server.services.git_aware_code_indexer import Chunker, DiffUtil, GitCLI, Indexer, ChunkPlugin, PayloadPlugin
+from server.services.edges import StructuralEdgePlugin
 from server.services.android_plugins import AndroidChunkPlugin, AndroidPayloadPlugin
 from server.services.initializers import Initializer
 from server.services.repository_registry import Repository, RepositoryRegistry
@@ -39,12 +40,15 @@ def _initializer(request: Request) -> Initializer:
     return request.app.state.initializer
 
 
-def _stack_plugins(stack_type: Optional[str]) -> Tuple[List[ChunkPlugin], List[PayloadPlugin], dict]:
+def _stack_plugins(
+    stack_type: Optional[str],
+) -> Tuple[List[ChunkPlugin], List[PayloadPlugin], List[StructuralEdgePlugin], dict]:
     if stack_type == "android_app":
-        return [AndroidChunkPlugin()], [AndroidPayloadPlugin(stack_type)], {"stack_type": stack_type}
+        payload_plugin = AndroidPayloadPlugin(stack_type)
+        return [AndroidChunkPlugin()], [payload_plugin], [payload_plugin], {"stack_type": stack_type}
     if stack_type:
-        return [], [], {"stack_type": stack_type}
-    return [], [], {}
+        return [], [], [], {"stack_type": stack_type}
+    return [], [], [], {}
 
 
 def _ensure_repo_registry_entry(request: Request, repo_id: str, stack_type: Optional[str] = None) -> Repository:
@@ -91,7 +95,7 @@ def _generate_full_index_progress(request: Request, repo_id: str, stack_type_ove
     try:
         repo_entry = _ensure_repo_registry_entry(request, repo_id, stack_type_override)
         stack_type = stack_type_override or repo_entry.stack_type or getattr(config, "STACK_TYPE", None)
-        chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
+        chunk_plugins, payload_plugins, edge_plugins, base_payload = _stack_plugins(stack_type)
         sync_state_with_registry(config.STATE_FILE, repo_id, repo_entry.last_indexed_commit)
         repo_path = get_repo_path(config.REPOS_DIR, repo_id)
         emb_client, store_client = initializer.resolve_clients(repo_entry.collection_name, repo_entry.embedding_model)
@@ -107,6 +111,7 @@ def _generate_full_index_progress(request: Request, repo_id: str, stack_type_ove
             base_payload=base_payload,
             chunk_plugins=chunk_plugins,
             stack_type=stack_type,
+            edge_plugins=edge_plugins,
         )
         files = indexer.git.list_files(head)
         total_files = len(files)
@@ -258,7 +263,7 @@ def _generate_update_index_progress(request: Request, repo_id: str, stack_type_o
     try:
         repo_entry = _ensure_repo_registry_entry(request, repo_id, stack_type_override)
         stack_type = stack_type_override or repo_entry.stack_type or getattr(config, "STACK_TYPE", None)
-        chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
+        chunk_plugins, payload_plugins, edge_plugins, base_payload = _stack_plugins(stack_type)
         sync_state_with_registry(config.STATE_FILE, repo_id, repo_entry.last_indexed_commit)
         repo_path = get_repo_path(config.REPOS_DIR, repo_id)
         emb_client, store_client = initializer.resolve_clients(repo_entry.collection_name, repo_entry.embedding_model)
@@ -292,6 +297,7 @@ def _generate_update_index_progress(request: Request, repo_id: str, stack_type_o
             base_payload=base_payload,
             chunk_plugins=chunk_plugins,
             stack_type=stack_type,
+            edge_plugins=edge_plugins,
         )
 
         if base != head:

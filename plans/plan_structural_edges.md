@@ -5,7 +5,7 @@ multiple stacks (android_app, web_frontend, etc.) can emit consistent
 edge data during indexing and expose it in search/MCP responses.
 Reference: see `plans/android_edge_types.md` for Android-specific edge
 types, targets, and sample payloads to implement.
-Progress: shared edge helpers + Android navgraph/layout/viewmodel/CALLS_API heuristics landed with unit tests; Android plugin refactored to emit edges through shared builder/normalizers; dockerized test rerun still pending after socket permission block.
+Progress: shared edge helpers + Android navgraph/layout/viewmodel/CALLS_API heuristics landed with unit tests; Android plugin refactored to emit edges through shared builder/normalizers; edge plugins wired through indexer/router; full + incremental indexing + dev-ui/LLM end-to-end validation completed.
 
 ## New Package Needed
 - Create `server/services/edges/` with:
@@ -45,16 +45,16 @@ Progress: shared edge helpers + Android navgraph/layout/viewmodel/CALLS_API heur
 2.4 [done] Ensure `payload["edges"]` is populated without expanding Qdrant filter fields; include `NAV_ACTION` meta (`source`, `id`) as documented.
 2.5 [done] Wire optional `CALLS_API` edge emission (Retrofit/OkHttp heuristics) but keep filters unchanged.
 
-3. Pipeline Wiring
-3.1 Extend `Chunker`/`Indexer` to accept stack-specific edge plugins; pass stack_type through existing metadata plumbing.
-3.2 Ensure edges are attached to chunk payloads during indexing and survive commit/working-tree modes.
-3.3 Keep router/MCP responses surfacing `edges` verbatim; avoid new filter keys beyond existing `stack_type`/`component_type`/`screen_name`/`tags`.
+3. Pipeline Wiring [done]
+3.1 [done] Extend `Chunker`/`Indexer` to accept stack-specific edge plugins; pass stack_type through existing metadata plumbing.
+3.2 [done] Ensure edges are attached to chunk payloads during indexing and survive commit/working-tree modes.
+3.3 [done] Keep router/MCP responses surfacing `edges` verbatim; avoid new filter keys beyond existing `stack_type`/`component_type`/`screen_name`/`tags`.
 
 4. Fixtures & Tests
 4.1 Add Android fixture repo with manifest, layouts, navgraph, and Kotlin/Java binding call sites (layout + nav edges).
 4.2 Add Android fixture coverage for `NAV_DESTINATION`, `NAV_ACTION` (with meta), `BINDS_LAYOUT`, `NAVIGATES_TO`, `USES_VIEWMODEL`, and (if implemented) `CALLS_API` per `plans/android_edge_types.md`.
 4.3 Add second-stack stub fixture (e.g., simple web_frontend) to assert cross-stack plugin compatibility and no edge leakage.
-4.4 Tests: `python -m pytest tests/test_android_plugins.py` additions for edge payloads; new tests for edge builder normalization/deduping; integration test in `server/test_git_rag_api.py` or new `tests/test_edges_in_index.py` to verify edges surface via indexing + search/MCP responses; include explicit edge payload shape assertions matching `plans/android_edge_types.md`. [partial: builder + Android plugin unit tests merged; full + incremental index E2E runs completed; search exposure checks still pending]
+4.4 Tests: `python -m pytest tests/test_android_plugins.py` additions for edge payloads; new tests for edge builder normalization/deduping; integration test in `server/test_git_rag_api.py` or new `tests/test_edges_in_index.py` to verify edges surface via indexing + search/MCP responses; include explicit edge payload shape assertions matching `plans/android_edge_types.md`. [done: builder + Android plugin unit tests, edge-plugin merge test, full + incremental index E2E, dev-ui/LLM verification of edge exposure]
 4.5 Dockerized workflow (per `plans/docker-testing-workflow.md`): run suites via `docker compose -f docker-compose.rag.yml run --rm rag-server pytest …` and the E2E smoke `docker compose -f docker-compose.rag.yml run --rm rag-server python server/test_git_rag_api.py`; keep embedding stack untouched, rely on rag stack for Qdrant, ensure `PYTHONPATH=/workspace/myrepo` and health checks satisfied; only skip Qdrant via `SKIP_COLLECTION_INIT=1` when explicitly noted.
 
 5. Validation & Docs

@@ -209,11 +209,45 @@ class AndroidPayloadPlugin(PayloadPlugin):
     def __init__(self, stack_type: str = "android_app"):
         self.stack_type = stack_type
 
+    def _collect_edges(self, chunk: Chunk, kind: Optional[str], meta: Dict[str, object]) -> List[EdgePayload]:
+        edges: List[EdgePayload] = []
+
+        content = getattr(chunk, "content", "") or ""
+        if content and (chunk.path.endswith(".kt") or chunk.path.endswith(".java") or kind in (None, "xml")):
+            # Layout binding via R.layout.*
+            for match in re.findall(r"R\.layout\.([A-Za-z0-9_]+)", content):
+                target = normalize_layout_target(match)
+                if target:
+                    edges.append(build_edge(EdgeType.BINDS_LAYOUT, target))
+            # NavController navigate calls
+            for match in re.findall(r"navigate\(\s*R\.id\.([A-Za-z0-9_]+)", content):
+                target = normalize_id(match)
+                if target:
+                    edges.append(build_edge(EdgeType.NAVIGATES_TO, target))
+            # startActivity(Intent(..., SomeActivity::class.java))
+            for match in re.findall(r"startActivity\([^)]*?([A-Za-z0-9_]+Activity)", content):
+                target = normalize_id(match)
+                if target:
+                    edges.append(build_edge(EdgeType.NAVIGATES_TO, target))
+            # Simple API call heuristic: serviceApi.method(…) or serviceService.method(…)
+            for service, method in re.findall(r"([A-Za-z0-9_]+(?:Api|Service))\.([A-Za-z0-9_]+)\(", content):
+                target = f"{service}.{method}"
+                edges.append(build_edge(EdgeType.CALLS_API, target))
+
+        if meta.get("edges"):
+            edges.extend(meta["edges"])
+
+        return dedupe_edges(edges)
+
+    def build_edges(self, chunk: Chunk) -> List[EdgePayload]:
+        meta = getattr(chunk, "meta", {}) or {}
+        kind = meta.get("kind")
+        return self._collect_edges(chunk, kind, meta)
+
     def build_payload(self, chunk: Chunk, branch: str, commit_sha: str) -> Dict[str, Optional[str]]:
         payload: Dict[str, Optional[str]] = {"stack_type": self.stack_type}
         stack_meta: Dict[str, object] = {}
         tags: List[str] = []
-        edges: List[EdgePayload] = []
 
         meta = getattr(chunk, "meta", {}) or {}
         kind = meta.get("kind")
@@ -281,35 +315,11 @@ class AndroidPayloadPlugin(PayloadPlugin):
                 payload["component_type"] = payload.get("component_type") or "fragment"
             payload["screen_name"] = payload.get("screen_name") or class_name
 
-        # Heuristic edge extraction from code content for layouts/nav/actions/API calls.
-        content = getattr(chunk, "content", "") or ""
-        if content and (chunk.path.endswith(".kt") or chunk.path.endswith(".java") or kind in (None, "xml")):
-            # Layout binding via R.layout.*
-            for match in re.findall(r"R\.layout\.([A-Za-z0-9_]+)", content):
-                target = normalize_layout_target(match)
-                if target:
-                    edges.append(build_edge(EdgeType.BINDS_LAYOUT, target))
-            # NavController navigate calls
-            for match in re.findall(r"navigate\(\s*R\.id\.([A-Za-z0-9_]+)", content):
-                target = normalize_id(match)
-                if target:
-                    edges.append(build_edge(EdgeType.NAVIGATES_TO, target))
-            # startActivity(Intent(..., SomeActivity::class.java))
-            for match in re.findall(r"startActivity\([^)]*?([A-Za-z0-9_]+Activity)", content):
-                target = normalize_id(match)
-                if target:
-                    edges.append(build_edge(EdgeType.NAVIGATES_TO, target))
-            # Simple API call heuristic: serviceApi.method(…) or serviceService.method(…)
-            for service, method in re.findall(r"([A-Za-z0-9_]+(?:Api|Service))\.([A-Za-z0-9_]+)\(", content):
-                target = f"{service}.{method}"
-                edges.append(build_edge(EdgeType.CALLS_API, target))
-
         if meta.get("summary"):
             payload["stack_text"] = meta["summary"]
-        if meta.get("edges"):
-            edges.extend(meta["edges"])
+        edges = self._collect_edges(chunk, kind, meta)
         if edges:
-            payload["edges"] = dedupe_edges(edges)
+            payload["edges"] = edges
         if stack_meta:
             payload["stack_meta"] = stack_meta
         if tags:
