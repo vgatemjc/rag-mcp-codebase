@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 import xml.etree.ElementTree as ET
 
 from .git_aware_code_indexer import Chunk, Range, ChunkPlugin, PayloadPlugin, sha256
+from .edges import EdgePayload, EdgeType, build_edge, dedupe_edges, merge_edges, normalize_id, normalize_layout_target
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 APP_NS = "{http://schemas.android.com/apk/res-auto}"
@@ -72,18 +73,11 @@ class AndroidChunkPlugin(ChunkPlugin):
         def _app_attr(node: ET.Element, name: str) -> Optional[str]:
             return node.attrib.get(f"{APP_NS}{name}") or node.attrib.get(name)
 
-        def _strip_id(value: Optional[str]) -> Optional[str]:
-            if not value:
-                return None
-            cleaned = value
-            if "/" in cleaned:
-                cleaned = cleaned.split("/", 1)[1]
-            return cleaned.lstrip("@+")
-
         kind = "xml"
         name = os.path.basename(path)
         summary_lines: List[str] = [f"<{root.tag} ... />"]
         meta: Dict[str, object] = {"kind": kind, "name": name}
+        edges: List[EdgePayload] = []
 
         if path.endswith("AndroidManifest.xml"):
             kind = "manifest"
@@ -99,9 +93,7 @@ class AndroidChunkPlugin(ChunkPlugin):
                     label = _attr(node, "label")
                     if label:
                         comp["label"] = label
-                    actions = [
-                        _attr(action, "name") for action in node.findall(".//intent-filter/action") if _attr(action, "name")
-                    ]
+                    actions = [_attr(action, "name") for action in node.findall(".//intent-filter/action") if _attr(action, "name")]
                     categories = [
                         _attr(cat, "name")
                         for cat in node.findall(".//intent-filter/category")
@@ -131,13 +123,13 @@ class AndroidChunkPlugin(ChunkPlugin):
             for node in root.iter():
                 node_id = _attr(node, "id")
                 if node_id:
-                    parsed = _strip_id(node_id)
+                    parsed = normalize_id(node_id)
                     if parsed:
                         view_ids.append(parsed)
                 frag_name = _attr(node, "name")
                 if frag_name and node.tag.lower() == "fragment":
                     fragment_tags.append(frag_name)
-                    frag_id = _strip_id(node_id)
+                    frag_id = normalize_id(node_id)
                     if frag_id:
                         fragment_tags.append(frag_id)
             data_binding = root.find(".//variable")
@@ -160,26 +152,27 @@ class AndroidChunkPlugin(ChunkPlugin):
                     "viewmodel_class": viewmodel_class,
                 }
             )
+            if viewmodel_class:
+                edges.append(build_edge(EdgeType.USES_VIEWMODEL, viewmodel_class))
         elif "/res/navigation/" in path:
             kind = "navgraph"
             name = os.path.splitext(os.path.basename(path))[0]
-            nav_id = _strip_id(_attr(root, "id")) or name
-            start_dest = _strip_id(_attr(root, "startDestination") or _app_attr(root, "startDestination"))
+            nav_id = normalize_id(_attr(root, "id")) or name
+            start_dest = normalize_id(_attr(root, "startDestination") or _app_attr(root, "startDestination"))
             destinations: List[str] = []
             actions: List[Dict[str, Optional[str]]] = []
-            edges: List[Dict[str, object]] = []
             for node in root:
-                dest_id = _strip_id(_attr(node, "id"))
+                dest_id = normalize_id(_attr(node, "id"))
                 if dest_id:
                     destinations.append(dest_id)
-                    edges.append({"type": "NAV_DESTINATION", "target": dest_id})
+                    edges.append(build_edge(EdgeType.NAV_DESTINATION, dest_id))
                 for action in node.findall(".//action"):
-                    target = _strip_id(_app_attr(action, "destination") or _attr(action, "destination"))
-                    act_id = _strip_id(_attr(action, "id"))
+                    target = normalize_id(_app_attr(action, "destination") or _attr(action, "destination"))
+                    act_id = normalize_id(_attr(action, "id"))
                     if target:
                         actions.append({"id": act_id, "from": dest_id or node.tag, "to": target})
                         edges.append(
-                            {"type": "NAV_ACTION", "target": target, "meta": {"source": dest_id or node.tag, "id": act_id}}
+                            build_edge(EdgeType.NAV_ACTION, target, {"source": dest_id or node.tag, "id": act_id})
                         )
             summary_lines = [f"navgraph {nav_id}"]
             if start_dest:
@@ -205,6 +198,8 @@ class AndroidChunkPlugin(ChunkPlugin):
             meta["kind"] = kind
         if "name" not in meta:
             meta["name"] = name
+        if edges:
+            meta["edges"] = merge_edges(meta.get("edges", []), edges)
         return meta
 
 
@@ -218,6 +213,7 @@ class AndroidPayloadPlugin(PayloadPlugin):
         payload: Dict[str, Optional[str]] = {"stack_type": self.stack_type}
         stack_meta: Dict[str, object] = {}
         tags: List[str] = []
+        edges: List[EdgePayload] = []
 
         meta = getattr(chunk, "meta", {}) or {}
         kind = meta.get("kind")
@@ -251,8 +247,6 @@ class AndroidPayloadPlugin(PayloadPlugin):
                 stack_meta["nav_actions"] = meta["actions"]
             if meta.get("start_destination"):
                 stack_meta["start_destination"] = meta["start_destination"]
-            if meta.get("edges"):
-                payload["edges"] = meta["edges"]
 
         # Basic heuristics by path/symbol for Kotlin/Java chunks.
         path = chunk.path
@@ -287,8 +281,35 @@ class AndroidPayloadPlugin(PayloadPlugin):
                 payload["component_type"] = payload.get("component_type") or "fragment"
             payload["screen_name"] = payload.get("screen_name") or class_name
 
+        # Heuristic edge extraction from code content for layouts/nav/actions/API calls.
+        content = getattr(chunk, "content", "") or ""
+        if content and (chunk.path.endswith(".kt") or chunk.path.endswith(".java") or kind in (None, "xml")):
+            # Layout binding via R.layout.*
+            for match in re.findall(r"R\.layout\.([A-Za-z0-9_]+)", content):
+                target = normalize_layout_target(match)
+                if target:
+                    edges.append(build_edge(EdgeType.BINDS_LAYOUT, target))
+            # NavController navigate calls
+            for match in re.findall(r"navigate\(\s*R\.id\.([A-Za-z0-9_]+)", content):
+                target = normalize_id(match)
+                if target:
+                    edges.append(build_edge(EdgeType.NAVIGATES_TO, target))
+            # startActivity(Intent(..., SomeActivity::class.java))
+            for match in re.findall(r"startActivity\([^)]*?([A-Za-z0-9_]+Activity)", content):
+                target = normalize_id(match)
+                if target:
+                    edges.append(build_edge(EdgeType.NAVIGATES_TO, target))
+            # Simple API call heuristic: serviceApi.method(…) or serviceService.method(…)
+            for service, method in re.findall(r"([A-Za-z0-9_]+(?:Api|Service))\.([A-Za-z0-9_]+)\(", content):
+                target = f"{service}.{method}"
+                edges.append(build_edge(EdgeType.CALLS_API, target))
+
         if meta.get("summary"):
             payload["stack_text"] = meta["summary"]
+        if meta.get("edges"):
+            edges.extend(meta["edges"])
+        if edges:
+            payload["edges"] = dedupe_edges(edges)
         if stack_meta:
             payload["stack_meta"] = stack_meta
         if tags:
