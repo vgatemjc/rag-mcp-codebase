@@ -43,6 +43,10 @@ class DatastoreResetService:
                 self.registry.reinitialize()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to reinitialize registry after reset: %s", exc)
+        try:
+            self.initializer.reset()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to reset initializer after datastore reset: %s", exc)
         return {
             "registry_db": registry_result,
             "qdrant": qdrant_result,

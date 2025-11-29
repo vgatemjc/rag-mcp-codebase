@@ -183,6 +183,33 @@ class RepositoryRegistry:
                 session.refresh(repo)
                 return repo
 
+    def upsert_repository(self, data: Dict[str, Optional[str]]) -> Repository:
+        """Create or update a repository in a single call."""
+        with self._lock:
+            with self._with_session() as session:
+                repo = session.exec(select(Repository).where(Repository.repo_id == data["repo_id"])).first()
+                if not repo:
+                    repo = Repository(
+                        repo_id=data["repo_id"],
+                        name=data.get("name") or data["repo_id"],
+                        url=data.get("url"),
+                        stack_type=data.get("stack_type"),
+                        collection_name=data.get("collection_name") or data.get("collection") or "git_rag-default",
+                        embedding_model=data.get("embedding_model") or data.get("model") or "text-embedding-3-large",
+                        last_indexed_commit=data.get("last_indexed_commit"),
+                    )
+                else:
+                    for field, value in data.items():
+                        if field == "repo_id" or value is None:
+                            continue
+                        if hasattr(repo, field):
+                            setattr(repo, field, value)
+                    repo.updated_at = datetime.utcnow()
+                session.add(repo)
+                session.commit()
+                session.refresh(repo)
+                return repo
+
     def update_repository(self, repo_id: str, data: Dict[str, Optional[str]]) -> Repository:
         with self._lock:
             with self._with_session() as session:

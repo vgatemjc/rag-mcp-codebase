@@ -64,10 +64,7 @@ def get_registry_entry(request: Request, repo_id: str):
 @router.post("", response_model=RepositoryOut)
 def create_registry_entry(request: Request, payload: RepositoryIn):
     normalized_payload = normalize_repository_payload(_config(request), payload)
-    try:
-        repo = _registry(request).create_repository(normalized_payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    repo = _registry(request).upsert_repository(normalized_payload)
     return RepositoryOut.model_validate(repo)
 
 

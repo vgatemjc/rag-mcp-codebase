@@ -93,3 +93,17 @@ class Initializer:
 
     def ensure_default_collection(self) -> None:
         self.ensure_collection(self.config.COLLECTION, self.config.EMB_MODEL)
+
+    def reset(self) -> None:
+        """Clear cached clients and collection state after datastore resets."""
+        with self._cache_lock:
+            self._embedding_cache.clear()
+            self._vector_store_cache.clear()
+        with self._collection_lock:
+            self._collection_ready.clear()
+        try:
+            if self._qdrant_admin:
+                self._qdrant_admin.close()
+        except Exception:
+            logger.debug("Failed to close cached Qdrant admin client during reset.", exc_info=True)
+        self._qdrant_admin = None

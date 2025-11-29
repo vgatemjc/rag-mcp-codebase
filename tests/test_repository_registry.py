@@ -113,3 +113,32 @@ def test_registry_router_crud(tmp_path, monkeypatch):
 
     resp = client.delete("/registry/sample")
     assert resp.status_code == 204
+
+
+def test_registry_post_upserts_existing_entry(tmp_path, monkeypatch):
+    monkeypatch.setenv("REGISTRY_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("SKIP_COLLECTION_INIT", "1")
+    module = importlib.import_module("server.git_rag_api")
+    module = importlib.reload(module)
+    client = TestClient(module.app)
+
+    repo_id = "autocreated"
+    resp = client.get(f"/repos/{repo_id}/index/status")
+    assert resp.status_code == 200
+    status = resp.json()
+    assert status["repo_id"] == repo_id
+
+    payload = {
+        "repo_id": repo_id,
+        "name": "Autocreated Repo",
+        "collection_name": "custom-collection",
+        "embedding_model": "custom-model",
+        "stack_type": "android_app",
+    }
+    resp = client.post("/registry", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "Autocreated Repo"
+    assert data["collection_name"] == "custom-collection"
+    assert data["embedding_model"] == "custom-model"
+    assert data["stack_type"] == "android_app"
