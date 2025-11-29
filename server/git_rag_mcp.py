@@ -179,6 +179,9 @@ async def semantic_code_search(
       * The matched symbol name
       * A similarity score
       * The snippet text (either from the RAG payload or read directly from disk)
+      * A JSON payload that may include `stack_type`, `component_type`, `screen_name`,
+        `tags`, and structural `edges` (e.g., Android nav/layout edges) when emitted
+        by the stack plugin
 
     Parameters
     ----------
@@ -190,7 +193,7 @@ async def semantic_code_search(
         Restrict the search to a particular repository ID. If omitted,
         all repositories indexed by the RAG server are searched.
     stack_type : str | None, optional
-        Optional stack hint (e.g., "android_app") to scope plugin filters.
+        Optional stack hint (e.g., "android_app") to scope plugin filters and edge emitters.
     component_type : str | None, optional
         Filter to a specific component type when the stack supports it.
     screen_name : str | None, optional
