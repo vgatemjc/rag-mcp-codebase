@@ -26,6 +26,8 @@ services:
       QDRANT_STORAGE_PATH: "/workspace/myrepo/rag-db"
     volumes:
       - ./server:/app/server
+      - ./tests:/app/tests
+      - ./pytest.ini:/app/pytest.ini:ro
       - ${HOST_REPO_PATH}:/workspace/myrepo:rw
     command: >
       sh -c "
