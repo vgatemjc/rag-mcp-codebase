@@ -60,7 +60,7 @@ Progress: shared edge helpers + Android navgraph/layout/viewmodel/CALLS_API heur
 5. Validation & Docs
 5.1 [done] Update `.env.example`/docs only if new env keys arise (avoid adding filter fields).
 5.2 [done] Add short README note in `server/services/edges/` describing schema and plugin expectations.
-5.3 Capture response examples for navgraph and layout-binding edges for PR notes.***
+5.3 [done] Capture response examples for navgraph and layout-binding edges for PR notes (MCP/LLM validation).***
 
 ## Open Discussion
 - Should edge targets be fully qualified URIs (e.g., `android://` or
