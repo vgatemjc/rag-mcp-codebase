@@ -1,7 +1,8 @@
 # Android App Analyzer Plugin – POC Plan
 
 Status: POC implemented with Android stack routing, metadata extraction,
-and tests; nav/layout edges and broader validation still in progress.
+and tests; work tracked here is considered complete. Remaining edge
+enhancements will be handled in a dedicated structural-edges plan.
 Items below marked ✅ (done) or ⏳ (not done).
 
 Objective: validate the multi-stack RAG design by delivering a working
