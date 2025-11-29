@@ -1,7 +1,8 @@
 # Android App Analyzer Plugin – POC Plan
 
-Status: first draft implemented; testing/debugging still needed. Items
-below marked ✅ (done in draft) or ⏳ (not done).
+Status: POC implemented with Android stack routing, metadata extraction,
+and tests; nav/layout edges and broader validation still in progress.
+Items below marked ✅ (done) or ⏳ (not done).
 
 Objective: validate the multi-stack RAG design by delivering a working
 Android App plugin that enriches indexing/search with stack-aware meta
@@ -26,9 +27,9 @@ and structural context.
 - `server/static/registry_ui/*`: surface stack defaults/options.
 
 ## Work Plan
-1) **Stack detection & config** ⏳ (env-only draft)
+1) **Stack detection & config** ✅
    - Add `stack_type` default to registry model + UI meta (e.g.,
-     `stack_type="android_app"`). ⏳
+     `stack_type="android_app"`). ✅
    - Pass `base_payload={"stack_type": ...}` into `Indexer` and keep
      stack-specific fields isolated in a `PayloadPlugin` implementation
      (no case statements in `_build_payload`). ✅ (hook + env stack_type)
@@ -37,7 +38,7 @@ and structural context.
      (basic heuristics)
    - Extend `index_router` and MCP tool args to accept optional
      `stack_type`/filters and route plugin selection based on registry
-     defaults. ⏳ (wired to env stack_type only)
+     defaults. ✅
 
 2) **Chunking architecture (common + plugin hooks)** ✅
    - Keep core chunking flow in `Chunker.chunks(...)` and
@@ -64,7 +65,8 @@ and structural context.
      wired)
    - Add lightweight XML chunker variant that preserves element
      boundaries and ids (e.g., `android:id`, `name`, `action`). ⏳
-     (heuristic synthetic chunks only)
+     (synthetic XML summary chunks with ids/actions; full boundary-aware
+     chunking still pending)
    - Use plugin hooks to attach `stack_type` context to chunks and to
      inject layout/navgraph synthetic chunks. ✅ (synthetic XML summary
      chunk)
@@ -73,15 +75,16 @@ and structural context.
    - Manifest: component type (`activity`, `service`, `receiver`),
      component name, intent-filters (actions/categories).
    - Layout XML: `layout_file`, `view_ids`, `viewmodel_class` (if
-     data-binding), `fragment_tag`. ⏳ (layout/file heuristic only)
-   - NavGraph: `nav_graph_id`, destinations, actions. ⏳ (id heuristic)
+     data-binding), `fragment_tag`. ✅
+   - NavGraph: `nav_graph_id`, destinations, actions. ✅ (heuristic
+     extraction)
    - Kotlin/Java: class name, file path; optional `@Composable` flag
      (detect via annotation) but keep as stretch. ⏳ (class-name suffix
-     heuristic)
+     heuristic only)
    - Store these as payload fields on relevant chunks. ✅ (payload plugin
      tags)
 
-5) **Structural edges (minimal viable)** ⏳
+5) **Structural edges (minimal viable)** ⏳ (navgraph edges shipped)
    - Represent edges as payload lists on involved chunks (e.g.,
      `edges: [{type:"BINDS_LAYOUT", target:"layout/main_activity.xml"}]`)
      to avoid new storage.
@@ -89,17 +92,20 @@ and structural context.
      - Manifest component → layout (by `android:theme`/`layout` hints if
        present).
      - Activity/Fragment → layout (by setContentView / inflate call).
-     - NavGraph → destination fragments/activities.
+     - NavGraph → destination fragments/activities. ✅ (edges emitted)
    - Keep schema small: `type`, `target`, `meta` (dict).
 
-6) **Search & MCP integration** ⏳
+6) **Search & MCP integration** ✅
    - Allow `/search` and MCP `semantic_code_search` to accept
      `stack_type` and simple meta filters (e.g., `screen_name`,
      `component`).
    - In results, surface edge payloads so clients can hop to related
      code/layouts.
+   - When filtering navgraphs, use the actual nav graph id from
+     `android:id` (e.g., `main_navigation`), not the filename unless
+     they match; filters are normalized to lowercase.
 
-7) **Filter discipline (avoid Qdrant filter bloat)** ⏳
+7) **Filter discipline (avoid Qdrant filter bloat)** ✅
    - Keep filterable fields minimal and consistent: `stack_type`,
      `component_type`, `screen_name`, and a short `tags` list of
      normalized strings.
@@ -110,15 +116,16 @@ and structural context.
    - Document allowed filters per stack and enforce them in router/MCP
      arg validation so plugins cannot proliferate payload fields.
 
-8) **Validation** ⏳
+8) **Validation** ⏳ (unit coverage added; fixture/integration pending)
    - Add fixture repo with minimal Android-like structure (Manifest +
      1-2 activities/fragments, layout, nav graph) inside tests fixtures
-     (no build tools needed).
+     (no build tools needed). ⏳
    - Unit tests:
-     - Payload contains `stack_type` and extracted manifest/layout/meta.
+     - Payload contains `stack_type` and extracted manifest/layout/meta. ✅
      - Edge payloads exist for activity→layout, navgraph→destination.
+       ✅ (navgraph only; activity/layout pending)
    - Integration-style: index fixture repo and ensure search filtered by
-     `stack_type` returns expected chunks.
+     `stack_type` returns expected chunks. ⏳
 
 9) **Non-goals (POC)** ✅ (defined)
    - Full Gradle/project model, resource merging, DI graph resolution.

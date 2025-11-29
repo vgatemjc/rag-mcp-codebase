@@ -20,7 +20,7 @@ class Config:
     QDRANT_URL: str = field(default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333"))
     QDRANT_API_KEY: str = field(default_factory=lambda: os.getenv("QDRANT_API_KEY", ""))
     EMB_BASE_URL: str = field(default_factory=lambda: os.getenv("EMB_BASE_URL", "http://localhost:8080/v1"))
-    EMB_MODEL: str = field(default_factory=lambda: os.getenv("EMB_MODEL", "BAAI/bge-small-en-v1.5"))
+    EMB_MODEL: str = field(default_factory=lambda: os.getenv("EMB_MODEL", "nomic-ai/CodeRankEmbed"))
     OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     REPOS_DIR: Path = field(default_factory=lambda: Path(os.getenv("REPOS_DIR", "/workspace/myrepo")))
     STATE_FILE: Path = field(default_factory=lambda: Path(os.getenv("STATE_FILE", "index_state.json")))

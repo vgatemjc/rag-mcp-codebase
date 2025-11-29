@@ -206,15 +206,19 @@ async def semantic_code_search(
     """
     logger.info(f"called search_code : {query}")
     try:
+        normalized_tags = sorted({t for t in (tags or []) if t})
+        normalized_screen = screen_name.lower() if screen_name else None
+        effective_stack = stack_type or os.getenv("STACK_TYPE")
+
         payload = {"query": query, "repo_id": repo, "k": k}
-        if stack_type:
-            payload["stack_type"] = stack_type
+        if effective_stack:
+            payload["stack_type"] = effective_stack
         if component_type:
             payload["component_type"] = component_type
-        if screen_name:
-            payload["screen_name"] = screen_name
-        if tags:
-            payload["tags"] = tags
+        if normalized_screen:
+            payload["screen_name"] = normalized_screen
+        if normalized_tags:
+            payload["tags"] = normalized_tags
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{RAG_URL}/search",

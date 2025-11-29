@@ -94,10 +94,13 @@ class Chunk:
     neighbors: List[str] = None
     block_id: Optional[str] = None
     block_range: Optional[Range] = None
+    meta: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.neighbors is None:
             self.neighbors = []
+        if self.meta is None:
+            self.meta = {}
 
 # TEI 서버의 최대 배치 크기 (로그에서 64로 확인됨)
 EMBEDDING_BATCH_SIZE = 32

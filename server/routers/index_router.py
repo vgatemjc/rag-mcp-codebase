@@ -47,16 +47,19 @@ def _stack_plugins(stack_type: Optional[str]) -> Tuple[List[ChunkPlugin], List[P
     return [], [], {}
 
 
-def _ensure_repo_registry_entry(request: Request, repo_id: str) -> Repository:
+def _ensure_repo_registry_entry(request: Request, repo_id: str, stack_type: Optional[str] = None) -> Repository:
     config = _config(request)
     registry = _registry(request)
+    effective_stack_type = stack_type or getattr(config, "STACK_TYPE", None)
     defaults = {
         "name": repo_id,
         "collection_name": config.COLLECTION,
         "embedding_model": config.EMB_MODEL,
-        "stack_type": getattr(config, "STACK_TYPE", None),
+        "stack_type": effective_stack_type,
     }
     repo = registry.ensure_repository(repo_id, defaults)
+    if stack_type and repo.stack_type != stack_type:
+        repo = registry.update_repository(repo_id, {"stack_type": stack_type})
     if repo.archived:
         raise HTTPException(status_code=400, detail=f"Repository '{repo_id}' is archived")
     return repo
@@ -68,26 +71,26 @@ def list_repos(request: Request):
 
 
 @router.post("/{repo_id}/index/full")
-def full_index(request: Request, repo_id: str):
-    generator = _generate_full_index_progress(request, repo_id)
+def full_index(request: Request, repo_id: str, stack_type: Optional[str] = None):
+    generator = _generate_full_index_progress(request, repo_id, stack_type)
     return StreamingResponse(generator, media_type="application/json")
 
 
 @router.post("/{repo_id}/index/update")
-def update_index(request: Request, repo_id: str):
-    generator = _generate_update_index_progress(request, repo_id)
+def update_index(request: Request, repo_id: str, stack_type: Optional[str] = None):
+    generator = _generate_update_index_progress(request, repo_id, stack_type)
     return StreamingResponse(generator, media_type="application/json")
 
 
-def _generate_full_index_progress(request: Request, repo_id: str):
+def _generate_full_index_progress(request: Request, repo_id: str, stack_type_override: Optional[str] = None):
     config = _config(request)
     registry = _registry(request)
     initializer = _initializer(request)
 
     start_time = datetime.utcnow()
     try:
-        repo_entry = _ensure_repo_registry_entry(request, repo_id)
-        stack_type = repo_entry.stack_type or getattr(config, "STACK_TYPE", None)
+        repo_entry = _ensure_repo_registry_entry(request, repo_id, stack_type_override)
+        stack_type = stack_type_override or repo_entry.stack_type or getattr(config, "STACK_TYPE", None)
         chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
         sync_state_with_registry(config.STATE_FILE, repo_id, repo_entry.last_indexed_commit)
         repo_path = get_repo_path(config.REPOS_DIR, repo_id)
@@ -245,7 +248,7 @@ def _generate_full_index_progress(request: Request, repo_id: str):
         logger.exception("Full index error for %s", repo_id)
 
 
-def _generate_update_index_progress(request: Request, repo_id: str):
+def _generate_update_index_progress(request: Request, repo_id: str, stack_type_override: Optional[str] = None):
     config = _config(request)
     registry = _registry(request)
     initializer = _initializer(request)
@@ -253,8 +256,8 @@ def _generate_update_index_progress(request: Request, repo_id: str):
     mode = "update"
     start_time = datetime.utcnow()
     try:
-        repo_entry = _ensure_repo_registry_entry(request, repo_id)
-        stack_type = repo_entry.stack_type or getattr(config, "STACK_TYPE", None)
+        repo_entry = _ensure_repo_registry_entry(request, repo_id, stack_type_override)
+        stack_type = stack_type_override or repo_entry.stack_type or getattr(config, "STACK_TYPE", None)
         chunk_plugins, payload_plugins, base_payload = _stack_plugins(stack_type)
         sync_state_with_registry(config.STATE_FILE, repo_id, repo_entry.last_indexed_commit)
         repo_path = get_repo_path(config.REPOS_DIR, repo_id)

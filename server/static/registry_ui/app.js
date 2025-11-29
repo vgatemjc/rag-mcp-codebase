@@ -57,6 +57,7 @@
       repo_id: document.getElementById("repo_id").value.trim(),
       name: optionalValue("name"),
       url: optionalValue("url"),
+      stack_type: optionalValue("stack_type"),
       collection_name: optionalValue("collection_name"),
       embedding_model: optionalValue("embedding_model"),
       last_indexed_commit: optionalValue("last_indexed_commit"),
@@ -78,6 +79,7 @@
         <p>${entry.name || "(no name provided)"}</p>
         <p class="dim">Collection: ${entry.collection_name}</p>
         <p class="dim">Model: ${entry.embedding_model}</p>
+        <p class="dim">Stack: ${entry.stack_type || "(default)"}</p>
         <p class="dim">${entry.archived ? "Archived" : "Active"}</p>
       `;
       registryList.appendChild(item);
@@ -92,6 +94,7 @@
       "Embedding model": config.embedding_model,
       "Default collection": config.collection,
       "Repos dir": config.repos_dir,
+      "Default stack": config.stack_type || "(not set)",
     };
     Object.entries(entries).forEach(([label, value]) => {
       const term = document.createElement("dt");
@@ -209,6 +212,7 @@
         renderMeta(meta.config);
         document.getElementById("collection_name").placeholder = meta.config.collection || "";
         document.getElementById("embedding_model").placeholder = meta.config.embedding_model || "";
+        document.getElementById("stack_type").placeholder = meta.config.stack_type || "android_app";
       }
       renderRegistry(meta.registry || []);
       renderOptions(embeddingList, meta.embedding_options, "No embedding options found.");

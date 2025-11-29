@@ -72,6 +72,7 @@ def get_registry_ui_meta(request: Request) -> Dict[str, Any]:
         "embedding_model": cfg.EMB_MODEL,
         "repos_dir": str(cfg.REPOS_DIR),
         "collection": cfg.COLLECTION,
+        "stack_type": cfg.STACK_TYPE,
     }
     entries = [
         {
@@ -80,6 +81,7 @@ def get_registry_ui_meta(request: Request) -> Dict[str, Any]:
             "collection_name": repo.collection_name,
             "embedding_model": repo.embedding_model,
             "archived": repo.archived,
+            "stack_type": repo.stack_type,
         }
         for repo in registry.list_repositories(include_archived=True)
     ]

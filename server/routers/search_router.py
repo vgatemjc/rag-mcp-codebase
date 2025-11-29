@@ -27,6 +27,8 @@ def search(request: Request, req: SearchRequest):
     initializer = request.app.state.initializer
     repo_path = None
     stack_type = req.stack_type or getattr(config, "STACK_TYPE", None)
+    screen_name = req.screen_name.lower() if req.screen_name else None
+    tags = sorted({t for t in (req.tags or []) if t}) or None
 
     try:
         if req.repo_id:
@@ -57,8 +59,8 @@ def search(request: Request, req: SearchRequest):
             repo=req.repo_id,
             stack_type=stack_type,
             component_type=req.component_type,
-            screen_name=req.screen_name,
-            tags=req.tags,
+            screen_name=screen_name,
+            tags=tags,
         )
         return results
     except HTTPException:
