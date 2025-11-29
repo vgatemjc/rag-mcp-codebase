@@ -12,9 +12,16 @@
   const configMeta = document.getElementById("config-meta");
   const embeddingList = document.getElementById("embedding-list");
   const collectionList = document.getElementById("collection-list");
+  const resetTargets = document.getElementById("reset-targets");
+  const resetCollections = document.getElementById("reset-collections");
+  const resetOutput = document.getElementById("reset-output");
+  const resetFlag = document.getElementById("reset-flag");
 
   const form = document.getElementById("registry-form");
   const createBtn = document.getElementById("create-btn");
+  const resetForm = document.getElementById("reset-form");
+  const resetBtn = document.getElementById("reset-btn");
+  const resetConfirm = document.getElementById("reset-confirm");
 
   function setStatus(message) {
     statusEl.textContent = message;
@@ -158,6 +165,55 @@
     renderCurl(data);
   }
 
+  function renderResetTargets(datastores) {
+    resetTargets.innerHTML = "";
+    if (!datastores) {
+      resetTargets.textContent = "No datastore metadata available.";
+      return;
+    }
+    const entries = {
+      "Registry DB": datastores.registry_db_path || "(unknown)",
+      "Registry file exists": datastores.registry_db_exists ? "yes" : "no",
+      "Qdrant storage": datastores.qdrant_storage_path || "(not configured)",
+      "Storage exists": datastores.qdrant_storage_exists ? "yes" : "no",
+      "Qdrant URL": datastores.qdrant_url || "(not set)",
+      "HOST_REPO_PATH": datastores.host_repo_path || "(not set)",
+    };
+    Object.entries(entries).forEach(([label, value]) => {
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const detail = document.createElement("dd");
+      detail.textContent = value;
+      resetTargets.appendChild(term);
+      resetTargets.appendChild(detail);
+    });
+  }
+
+  function renderResetCollections(collections) {
+    resetCollections.innerHTML = "";
+    if (!collections || collections.length === 0) {
+      const item = document.createElement("li");
+      item.className = "pill muted";
+      item.textContent = "No registry collections found.";
+      resetCollections.appendChild(item);
+      return;
+    }
+    collections.forEach((name) => {
+      const item = document.createElement("li");
+      item.className = "pill";
+      item.textContent = name;
+      resetCollections.appendChild(item);
+    });
+  }
+
+  function applyResetGuard(datastores) {
+    const allowed = Boolean(datastores && datastores.allow_data_reset);
+    resetBtn.disabled = !allowed;
+    resetConfirm.disabled = !allowed;
+    resetFlag.textContent = allowed ? "Enabled" : "Disabled";
+    resetFlag.classList.toggle("muted", !allowed);
+  }
+
   async function handlePreview(event) {
     event.preventDefault();
     const payload = buildPayload();
@@ -208,6 +264,7 @@
     try {
       const meta = await fetchJson("/registry/ui/meta");
       state.meta = meta;
+      applyResetGuard(meta.datastores);
       if (meta.config) {
         renderMeta(meta.config);
         document.getElementById("collection_name").placeholder = meta.config.collection || "";
@@ -218,6 +275,8 @@
       renderOptions(embeddingList, meta.embedding_options, "No embedding options found.");
       renderOptions(collectionList, meta.qdrant_collections, "No collections discovered.");
       renderEmbeddingDatalist(meta.embedding_options || []);
+      renderResetTargets(meta.datastores);
+      renderResetCollections(meta.datastores?.registry_collections || []);
       setStatus("Configuration loaded.");
     } catch (err) {
       setStatus("Could not load meta; retry after backend starts.");
@@ -225,7 +284,38 @@
     }
   }
 
+  async function handleReset(event) {
+    event.preventDefault();
+    if (!state.meta?.datastores?.allow_data_reset) {
+      setStatus("Data reset is disabled by configuration.");
+      return;
+    }
+    const confirm = resetConfirm.value.trim();
+    if (!confirm) {
+      setStatus('Please type "delete" to confirm.');
+      return;
+    }
+    resetBtn.disabled = true;
+    setStatus("Resetting local datastores…");
+    try {
+      const result = await fetchJson("/registry/datastores", {
+        method: "DELETE",
+        body: JSON.stringify({ confirm }),
+      });
+      resetOutput.textContent = JSON.stringify(result, null, 2);
+      setStatus("Datastore reset completed.");
+      resetConfirm.value = "";
+      await loadMeta();
+    } catch (err) {
+      setStatus(err.message || "Reset failed.");
+      resetOutput.textContent = JSON.stringify(err.data || {}, null, 2);
+    } finally {
+      resetBtn.disabled = !state.meta?.datastores?.allow_data_reset;
+    }
+  }
+
   form.addEventListener("submit", handlePreview);
   createBtn.addEventListener("click", handleCreate);
+  resetForm.addEventListener("submit", handleReset);
   loadMeta();
 })();

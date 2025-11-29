@@ -39,7 +39,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app = FastAPI(title="Git RAG API", lifespan=lifespan)
 
     app.state.config = cfg
-    app.state.registry = RepositoryRegistry()
+    app.state.registry = RepositoryRegistry(db_path=cfg.REGISTRY_DB_PATH, db_dir=cfg.REGISTRY_DB_DIR)
     app.state.initializer = Initializer(cfg)
     app.state.sandbox_manager = SandboxManager(cfg.REPOS_DIR, cfg.BRANCH)
     app.state.mcp_service = MCPService(cfg.MCP_MODULE) if cfg.EXPOSE_MCP_UI else None

@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 
 from server.config import Config
 from server.services.initializers import Initializer
+from server.services.datastore_reset import DatastoreResetService
 from server.services.repository_registry import RepositoryRegistry
 
 router = APIRouter(prefix="/registry/ui", tags=["registry-ui"])
@@ -66,6 +67,8 @@ def serve_registry_ui():
 def get_registry_ui_meta(request: Request) -> Dict[str, Any]:
     cfg = _config(request)
     registry = _registry(request)
+    reset_service = DatastoreResetService(cfg, registry, _initializer(request))
+    available_collections = _fetch_collections(_initializer(request))
     defaults = {
         "qdrant_url": cfg.QDRANT_URL,
         "embedding_base_url": cfg.EMB_BASE_URL,
@@ -89,5 +92,9 @@ def get_registry_ui_meta(request: Request) -> Dict[str, Any]:
         "config": defaults,
         "registry": entries,
         "embedding_options": _load_embedding_options(),
-        "qdrant_collections": _fetch_collections(_initializer(request)),
+        "qdrant_collections": available_collections,
+        "datastores": {
+            **reset_service.describe_targets(),
+            "observed_collections": available_collections,
+        },
     }

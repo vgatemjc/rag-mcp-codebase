@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, status
 
 from server.config import Config
+from server.models.datastore_reset import DatastoreResetRequest, DatastoreResetResponse
 from server.models.repository import (
     RegistryWebhook,
     RepositoryIn,
@@ -12,6 +13,8 @@ from server.models.repository import (
     RepositoryUpdate,
 )
 from server.models.sandbox import SandboxCreate, SandboxOut, SandboxUpdate
+from server.services.datastore_reset import DatastoreResetService
+from server.services.initializers import Initializer
 from server.services.repository_registry import RepositoryRegistry
 from server.services.sandbox_manager import SandboxManager
 
@@ -28,6 +31,10 @@ def _sandboxes(request: Request) -> SandboxManager:
 
 def _config(request: Request) -> Config:
     return request.app.state.config
+
+
+def _initializer(request: Request) -> Initializer:
+    return request.app.state.initializer
 
 
 def normalize_repository_payload(config: Config, payload: RepositoryIn) -> dict:
@@ -62,6 +69,20 @@ def create_registry_entry(request: Request, payload: RepositoryIn):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return RepositoryOut.model_validate(repo)
+
+
+@router.delete("/datastores", response_model=DatastoreResetResponse)
+def reset_datastores(request: Request, payload: DatastoreResetRequest):
+    config = _config(request)
+    if not config.ALLOW_DATA_RESET:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Data reset is disabled. Set ALLOW_DATA_RESET=1 to enable.",
+        )
+    if payload.confirm.lower() != "delete":
+        raise HTTPException(status_code=400, detail="Confirmation token mismatch. Type 'delete' to proceed.")
+    service = DatastoreResetService(config, _registry(request), _initializer(request))
+    return service.reset()
 
 
 @router.put("/{repo_id}", response_model=RepositoryOut)

@@ -1,12 +1,4 @@
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: qdrant
-    restart: unless-stopped
-    network_mode: "host"
-    volumes:
-      - ./rag-db:/qdrant/storage
-
   embedding-tei:
     profiles: ["tei"]
     image: ghcr.io/huggingface/text-embeddings-inference:86-1.8
@@ -95,6 +87,5 @@ services:
     command: ["serve"]
 
 volumes:
-  rag-db:
   model_cache:
   ollama_models:

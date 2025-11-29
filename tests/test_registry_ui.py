@@ -23,6 +23,8 @@ def test_registry_ui_endpoints(tmp_path, monkeypatch):
     assert meta["config"]["embedding_model"] == cfg.EMB_MODEL
     assert isinstance(meta.get("embedding_options"), list)
     assert isinstance(meta.get("qdrant_collections"), list)
+    assert meta["datastores"]["allow_data_reset"] == cfg.ALLOW_DATA_RESET
+    assert meta["datastores"]["registry_db_path"] == str(cfg.REGISTRY_DB_PATH)
 
     preview = client.post("/registry/preview", json={"repo_id": "demo"}).json()
     assert preview["target"] == "/registry"

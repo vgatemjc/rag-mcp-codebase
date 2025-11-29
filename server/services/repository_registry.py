@@ -59,20 +59,50 @@ class Report(SQLModel, table=True):
 class RepositoryRegistry:
     """Lightweight SQLModel-backed registry for repositories, sandboxes, and reports."""
 
-    def __init__(self, db_url: Optional[str] = None):
-        db_file = db_url
-        if not db_file:
-            explicit_path = os.getenv("REGISTRY_DB_PATH")
-            if explicit_path:
-                db_file = f"sqlite:///{Path(explicit_path).as_posix()}"
-            else:
-                base_dir = Path(os.getenv("REGISTRY_DB_DIR") or Path.home() / ".rag-registry")
-                base_dir.mkdir(parents=True, exist_ok=True)
-                db_file = f"sqlite:///{(base_dir / 'registry.db').as_posix()}"
-        self.engine = create_engine(db_file, connect_args={"check_same_thread": False})
+    def __init__(self, db_url: Optional[str] = None, db_path: Optional[Path] = None, db_dir: Optional[Path] = None):
+        self.db_path = self._resolve_db_path(db_url=db_url, db_path=db_path, db_dir=db_dir)
+        engine_url = db_url
+        if not engine_url:
+            if not self.db_path:
+                raise ValueError("Unable to resolve registry database path.")
+            engine_url = f"sqlite:///{self.db_path.as_posix()}"
+        self._engine_url = engine_url
+        self._connect_args = {"check_same_thread": False}
+        self.engine = create_engine(self._engine_url, connect_args=self._connect_args)
         SQLModel.metadata.create_all(self.engine)
         self._ensure_schema()
         self._lock = threading.Lock()
+
+    def _resolve_db_path(self, *, db_url: Optional[str], db_path: Optional[Path], db_dir: Optional[Path]) -> Optional[Path]:
+        if db_path:
+            resolved = Path(db_path).expanduser()
+        elif db_url and db_url.startswith("sqlite:///"):
+            resolved = Path(db_url.replace("sqlite:///", "")).expanduser()
+        else:
+            explicit_path = os.getenv("REGISTRY_DB_PATH")
+            if explicit_path:
+                resolved = Path(explicit_path).expanduser()
+            else:
+                base_dir = Path(
+                    db_dir
+                    or os.getenv("REGISTRY_DB_DIR")
+                    or (os.getenv("HOST_REPO_PATH") or "/workspace/myrepo") + "/registry_db"
+                )
+                base_dir.mkdir(parents=True, exist_ok=True)
+                resolved = base_dir / "registry.db"
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        return resolved
+
+    def reinitialize(self) -> None:
+        """Recreate engine after on-disk reset to ensure new DB file is used."""
+        with self._lock:
+            try:
+                self.engine.dispose()
+            except Exception:
+                pass
+            self.engine = create_engine(self._engine_url, connect_args=self._connect_args)
+            SQLModel.metadata.create_all(self.engine)
+            self._ensure_schema()
 
     def _with_session(self):
         return Session(self.engine)

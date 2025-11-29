@@ -96,6 +96,40 @@
         <pre id="curl-output" class="code-block">curl snippet appears after preview.</pre>
       </section>
 
+      <section class="panel danger">
+        <div class="danger-header">
+          <div>
+            <p class="eyebrow">Danger zone</p>
+            <h3>Delete local data</h3>
+            <p class="note">
+              Removes the registry SQLite file and drops Qdrant collections tied to registry entries. Host-only
+              wipe is guarded by <code>ALLOW_DATA_RESET</code>.
+            </p>
+          </div>
+          <div class="pill muted" id="reset-flag">Disabled</div>
+        </div>
+        <div class="stack">
+          <div>
+            <p class="label">Targets</p>
+            <dl class="meta-list" id="reset-targets"></dl>
+          </div>
+          <div>
+            <p class="label">Collections to drop</p>
+            <ul class="pill-list" id="reset-collections"></ul>
+          </div>
+        </div>
+        <form id="reset-form" class="reset-form">
+          <label>
+            <span>Type "delete" to confirm</span>
+            <input id="reset-confirm" name="reset-confirm" placeholder="delete" />
+          </label>
+          <div class="actions">
+            <button type="submit" id="reset-btn" class="danger-btn">Delete local data</button>
+          </div>
+        </form>
+        <pre id="reset-output" class="code-block">Reset results will appear here.</pre>
+      </section>
+
       <section class="panel">
         <h3>Latest response</h3>
         <pre id="create-output" class="code-block">Registry responses will appear here.</pre>

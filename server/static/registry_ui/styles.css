@@ -73,6 +73,18 @@ body {
   padding: 18px;
 }
 
+.panel.danger {
+  border-color: rgba(248, 113, 113, 0.6);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.2);
+}
+
+.danger-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
 .columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -121,6 +133,12 @@ button {
 button.secondary {
   background: transparent;
   color: var(--accent);
+}
+
+.danger-btn {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #0b1224;
 }
 
 .meta-list {
@@ -206,6 +224,14 @@ button.secondary {
   border-radius: 12px;
   padding: 12px;
   overflow-x: auto;
+}
+
+.reset-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0;
 }
 
 @media (max-width: 720px) {

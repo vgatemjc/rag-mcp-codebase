@@ -1,4 +1,12 @@
 services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    network_mode: "host"
+    volumes:
+      - ${HOST_REPO_PATH}/rag-db:/qdrant/storage
+
   rag-server:
     build:
       context: ./server
@@ -13,6 +21,9 @@ services:
       OLLAMA_URL: "${OLLAMA_ENDPOINT}"
       DIM: "${DIM:-0}"
       PYTHONPATH: "/app:/workspace/myrepo"
+      ALLOW_DATA_RESET: "${ALLOW_DATA_RESET:-0}"
+      HOST_REPO_PATH: "/workspace/myrepo"
+      QDRANT_STORAGE_PATH: "/workspace/myrepo/rag-db"
     volumes:
       - ./server:/app/server
       - ${HOST_REPO_PATH}:/workspace/myrepo:rw

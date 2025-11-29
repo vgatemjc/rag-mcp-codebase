@@ -2,14 +2,14 @@
 
 ### 1. Compose Separation ✅
 - Maintain two compose files:
-  - `docker-compose.embedding.yml` → Qdrant + embedding provider (TEI, vLLM, Ollama). Each provider gets its own service block and env vars (`EMB_BASE_URL`, `EMB_MODEL`, auth tokens).
-  - `docker-compose.rag.yml` → FastAPI (`server.main:app`), MCP worker, web UI.
-- Shared `.env` supplies Qdrant/embedding URLs; rag compose only consumes the URLs, never launches infra services directly.
-- **Agent rule:** Do not touch the embedding compose stack during routine test runs. Assume embedding/Qdrant are already healthy; only operate on `docker-compose.rag.yml` unless explicitly told otherwise.
+  - `docker-compose.embedding.yml` → Embedding provider only (TEI, vLLM, Ollama). Each provider gets its own service block and env vars (`EMB_BASE_URL`, `EMB_MODEL`, auth tokens).
+  - `docker-compose.rag.yml` → Qdrant, FastAPI (`server.main:app`), MCP worker, web UI.
+- Shared `.env` supplies Qdrant/embedding URLs; rag compose now launches Qdrant, embedding compose only hosts embedding.
+- **Agent rule:** Do not touch the embedding compose stack during routine test runs beyond the chosen embedding profile. Operate on `docker-compose.rag.yml` for app/Qdrant lifecycle unless explicitly told otherwise.
 
 ### 2. Refactor Workflow (pre / during / post)
 - **Pre-change cleanup**
-  - Leave the embedding stack running. Down only the rag stack if needed:  
+  - Leave the embedding stack running. Down only the rag stack (now includes Qdrant) if needed:  
     `docker compose -f docker-compose.rag.yml down`
   - Re-export `.env` (or the profile-specific env file) so `QDRANT_ENDPOINT`, `EMB_ENDPOINT`, `HOST_REPO_PATH`, etc., are fresh in the shell before building images.
 - **During iteration**
@@ -33,7 +33,7 @@
 - **End-to-end smoke test**
   - `docker compose -f docker-compose.rag.yml run --rm rag-server python server/test_git_rag_api.py`
 - **Environment requirements**
-  - Run these commands only after the embedding/Qdrant stack from `docker-compose.embedding.yml` is healthy so the containers hit real dependencies.
+  - Run these commands only after the embedding stack from `docker-compose.embedding.yml` is healthy so the containers hit real dependencies; Qdrant now comes up with the rag stack.
   - Health checks inside `docker-compose.rag.yml` hit `${EMB_ENDPOINT}/health`. For vLLM, set `EMB_ENDPOINT` to the root (e.g., `http://localhost:8003`) because `/health` is served there even though embeddings live under `/v1/embeddings`. TEI keeps `/v1` in the endpoint (e.g., `http://localhost:8080/v1`), which also serves `/v1/health`.
   - Leave `SKIP_COLLECTION_INIT` unset (defaults to `0`) to exercise collection initialization; only override when intentionally skipping Qdrant, and document those exceptions in the PR/tests.
 
@@ -41,7 +41,7 @@
 - **Profile selection**
   - Launch only one embedding provider profile at a time:  
     `docker compose -f docker-compose.embedding.yml --profile <tei|vllm-nvidia|vllm-amd|ollama> up -d --build`
-  - Profiles always include Qdrant plus the selected embedding container; stop them with the same profile flag on `down`.
+  - Profiles include only the selected embedding container; Qdrant comes from the rag stack. Stop profiles with the same flag on `down`.
 - **Environment bridging**
   - Infra stack exports provider-specific variables (e.g., `TEI_MODEL_ID`, `VLLM_MODEL_ID`) but the rag stack only reads generic values: `QDRANT_ENDPOINT`, `EMB_ENDPOINT`, `EMB_MODEL`, and optionally `OLLAMA_ENDPOINT`.
   - Maintain lightweight `.env.embedding.<provider>` files with the correct URLs/models; source one before bringing the stacks up, then export the rag env to point at the running service, e.g.:
