@@ -58,9 +58,9 @@ Progress: shared edge helpers + Android navgraph/layout/viewmodel/CALLS_API heur
 4.5 Dockerized workflow (per `plans/docker-testing-workflow.md`): run suites via `docker compose -f docker-compose.rag.yml run --rm rag-server pytest …` and the E2E smoke `docker compose -f docker-compose.rag.yml run --rm rag-server python server/test_git_rag_api.py`; keep embedding stack untouched, rely on rag stack for Qdrant, ensure `PYTHONPATH=/workspace/myrepo` and health checks satisfied; only skip Qdrant via `SKIP_COLLECTION_INIT=1` when explicitly noted.
 
 5. Validation & Docs
-5.1 Update `.env.example`/docs only if new env keys arise (avoid adding filter fields).
-5.2 Add short README note in `server/services/edges/` describing schema and plugin expectations.
-5.3 Capture response examples for navgraph and layout-binding edges for PR notes.
+5.1 [done] Update `.env.example`/docs only if new env keys arise (avoid adding filter fields).
+5.2 [done] Add short README note in `server/services/edges/` describing schema and plugin expectations.
+5.3 Capture response examples for navgraph and layout-binding edges for PR notes.***
 
 ## Open Discussion
 - Should edge targets be fully qualified URIs (e.g., `android://` or
