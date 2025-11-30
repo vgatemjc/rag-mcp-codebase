@@ -195,7 +195,8 @@ async def semantic_code_search(
     stack_type : str | None, optional
         Optional stack hint (e.g., "android_app") to scope plugin filters and edge emitters.
     component_type : str | None, optional
-        Filter to a specific component type when the stack supports it.
+        Filter to a specific component type when the stack supports it. For Android, emitted values are
+        {"manifest", "layout", "navgraph", "activity", "fragment"}.
     screen_name : str | None, optional
         Filter to a particular screen/view name when provided by the stack plugin.
     tags : list[str] | None, optional
