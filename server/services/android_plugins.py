@@ -24,6 +24,10 @@ def _first_n(text: str, n: int = 800) -> str:
 class AndroidChunkPlugin(ChunkPlugin):
     """Android-aware chunk plugin that can add synthetic chunks for nav/layout XML."""
 
+    def __init__(self):
+        # Cache parsed XML metadata per path so we can reuse it across preprocess/postprocess/extra_chunks.
+        self._meta_cache: Dict[str, Dict[str, object]] = {}
+
     def supports(self, path: str, stack_type: Optional[str] = None) -> bool:
         if stack_type and stack_type != "android_app":
             return False
@@ -32,15 +36,28 @@ class AndroidChunkPlugin(ChunkPlugin):
         )
 
     def preprocess(self, src: str, path: str, repo: str) -> str:
+        # Parse and stash metadata early so postprocess/extra_chunks can reuse it.
+        if self.supports(path, "android_app"):
+            meta = self._extract_meta(src, path)
+            if meta:
+                self._meta_cache[path] = meta
         return src
 
     def postprocess(self, chunks: List[Chunk], path: str, repo: str) -> List[Chunk]:
+        # Attach parsed meta (including edges) to the base XML chunks so payload builders can emit edges.
+        meta = self._meta_cache.get(path)
+        if not meta:
+            return chunks
+        for ch in chunks:
+            if getattr(ch, "meta", None):
+                continue
+            ch.meta = meta
         return chunks
 
     def extra_chunks(self, src: str, path: str, repo: str) -> List[Chunk]:
         if not self.supports(path, "android_app"):
             return []
-        meta = self._extract_meta(src, path)
+        meta = self._meta_cache.get(path) or self._extract_meta(src, path)
         if not meta:
             return []
         content = meta.get("summary", "")
@@ -233,6 +250,11 @@ class AndroidPayloadPlugin(PayloadPlugin):
             for service, method in re.findall(r"([A-Za-z0-9_]+(?:Api|Service))\.([A-Za-z0-9_]+)\(", content):
                 target = f"{service}.{method}"
                 edges.append(build_edge(EdgeType.CALLS_API, target))
+            # ViewModel usage heuristics (KTX delegates and ViewModelProvider)
+            for vm in re.findall(r"by\s+(?:activityViewModels|viewModels|hiltViewModels|hiltViewModel)\s*<\s*([A-Za-z0-9_]+)\s*>", content):
+                edges.append(build_edge(EdgeType.USES_VIEWMODEL, vm))
+            for vm in re.findall(r"ViewModelProvider\([^)]*\)\s*\[\s*([A-Za-z0-9_]+)\s*::class", content):
+                edges.append(build_edge(EdgeType.USES_VIEWMODEL, vm))
 
         if meta.get("edges"):
             edges.extend(meta["edges"])
@@ -269,6 +291,7 @@ class AndroidPayloadPlugin(PayloadPlugin):
                 stack_meta["fragment_tags"] = meta["fragment_tags"]
             if meta.get("viewmodel_class"):
                 stack_meta["viewmodel_class"] = meta["viewmodel_class"]
+                tags.append("viewmodel")
         if kind == "navgraph":
             payload["component_type"] = payload.get("component_type") or "navgraph"
             if meta.get("nav_graph_id"):
@@ -320,6 +343,8 @@ class AndroidPayloadPlugin(PayloadPlugin):
         edges = self._collect_edges(chunk, kind, meta)
         if edges:
             payload["edges"] = edges
+            if any(e.get("type") == EdgeType.USES_VIEWMODEL.value for e in edges):
+                tags.append("viewmodel")
         if stack_meta:
             payload["stack_meta"] = stack_meta
         if tags:

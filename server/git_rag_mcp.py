@@ -257,7 +257,7 @@ async def semantic_code_search(
             
             location = f"{repo_name}/{path}#{symbol}:{start}-{end}"
             score_str = f"score={score:.4f}"
-            
+
             formatted_results.append(
                 f"{location}\n{symbol}\n{score_str}\n\n{code_snippet}\n{'-'*60}\n"
             )
