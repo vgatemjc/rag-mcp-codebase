@@ -76,13 +76,7 @@ services:
       VECTOR_DB: qdrant
       QDRANT_URI: "${QDRANT_ENDPOINT}"
       ENABLE_MCP: "true"
-      ENABLE_RAG: "true"
-      EMBEDDING_ENGINE: "${WEBUI_EMBED_ENGINE:-vllm}"
-      RAG_EMBEDDING_ENGINE: "${WEBUI_RAG_ENGINE:-vllm}"
-      RAG_EMBEDDING_MODEL: "${WEBUI_RAG_MODEL:-nomic-ai/nomic-embed-code}"
-      RAG_EMBEDDING_API_BASE: "${RAG_SERVER_ENDPOINT}"
       WEBUI_AUTH: "${WEBUI_AUTH:-false}"
-      ENABLE_MODEL_SELECTOR: "${WEBUI_ENABLE_MODEL_SELECTOR:-true}"
       RAG_ALLOWED_FILE_EXTENSIONS: "pdf,docx,md,txt,json,yaml,yml,toml,csv,html,css,js,ts,jsx,tsx,py,java,c,cpp,h,go,sh,dockerfile,rs,log"
     volumes:
       - ./webui_data:/app/backend/data
