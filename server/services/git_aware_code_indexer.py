@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict, Any, Protocol, TYPE_CHECKING
 import uuid
 from openai import OpenAI
+import tiktoken
 
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import PointStruct, Filter, FieldCondition, MatchAny, MatchValue
@@ -40,6 +41,10 @@ CHUNK_LINES = int(os.getenv("CHUNK_LINES", "120"))
 CHUNK_TOKEN_FRACTION = float(os.getenv("CHUNK_TOKEN_FRACTION", "0.6"))
 # Cap characters per chunk using a conservative chars-per-token estimate; enforce a sensible floor.
 MAX_CONTENT_CHARS = max(256, int(CHUNK_TOKENS * CHUNK_TOKEN_FRACTION * CHARS_PER_TOKEN_EST))
+
+# Embedding request safety limits.
+EMBED_CTX_TOKENS = int(os.getenv("EMBED_CTX_TOKENS", "512"))
+EMBEDDING_BATCH_SIZE = max(1, int(os.getenv("EMBEDDING_BATCH_SIZE", "4")))
 
 # Optional Tree-sitter
 _TS_AVAILABLE = False
@@ -102,9 +107,6 @@ class Chunk:
         if self.meta is None:
             self.meta = {}
 
-# TEI 서버의 최대 배치 크기 (로그에서 64로 확인됨)
-EMBEDDING_BATCH_SIZE = 32
-
 
 class PayloadPlugin(Protocol):
     """Hook to attach stack- or domain-specific fields to a chunk payload."""
@@ -141,6 +143,13 @@ class Embeddings:
         self.base_url = base_url.rstrip("/") + "/v1"  # Ensure OpenAI-compatible base path
         self.model = model
         self.api_key = api_key
+        self.token_budget = EMBED_CTX_TOKENS
+        self.batch_size = EMBEDDING_BATCH_SIZE
+        try:
+            self.encoding = tiktoken.get_encoding("cl100k_base")
+        except Exception as e:
+            logger.warning("Failed to load tiktoken encoding; falling back to naive length estimates: %s", e)
+            self.encoding = None
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key if self.api_key else "unused",  # TEI may not require it; set to dummy if empty
@@ -156,25 +165,63 @@ class Embeddings:
         if not texts:
             return []
 
-        all_embeddings = []
-        for i in range(0, len(texts), EMBEDDING_BATCH_SIZE):
-            batch = texts[i:i + EMBEDDING_BATCH_SIZE]
-            
-            logger.info(f"Sending embedding request for batch {i} to {i + len(batch)}")
+        def _count_tokens(text: str) -> int:
+            if self.encoding:
+                return len(self.encoding.encode(text))
+            # Fallback heuristic: assume 4 chars per token for safety.
+            return int(len(text) / 4) + 1
 
+        def _truncate_to_budget(text: str) -> str:
+            if not self.encoding or _count_tokens(text) <= self.token_budget:
+                return text
+            tokens = self.encoding.encode(text)
+            truncated = self.encoding.decode(tokens[: self.token_budget])
+            logger.warning("Truncated input from %d to %d tokens to fit embedding context", len(tokens), self.token_budget)
+            return truncated
+
+        prepared = []
+        for t in texts:
+            cleaned = _truncate_to_budget(t)
+            prepared.append(cleaned)
+
+        all_embeddings: List[List[float]] = []
+        current_batch: List[str] = []
+        current_tokens = 0
+
+        def _flush_batch():
+            nonlocal current_batch, current_tokens, all_embeddings
+            if not current_batch:
+                return
             try:
                 response = self.client.embeddings.create(
-                    input=batch,
+                    input=current_batch,
                     model=self.model
                 )
-                # Extract embeddings from the response
                 batch_embeddings = [item.embedding for item in response.data]
                 all_embeddings.extend(batch_embeddings)
-                
             except Exception as e:  # Catch OpenAI SDK errors (e.g., APIError, Timeout)
-                logger.error(f"Error during embedding request for batch {i}: {e}")
-                # Re-raise to propagate the error
+                logger.error("Error during embedding request for batch of %d texts: %s", len(current_batch), e)
                 raise
+            finally:
+                current_batch = []
+                current_tokens = 0
+
+        for text in prepared:
+            text_tokens = _count_tokens(text)
+            # Flush if adding this text would exceed the budget or batch size.
+            if current_batch and (len(current_batch) >= self.batch_size or current_tokens + text_tokens > self.token_budget):
+                _flush_batch()
+            # If a single text still exceeds the budget (should not after truncation), force single-item batch.
+            if text_tokens > self.token_budget:
+                logger.warning("Single text exceeds token budget even after truncation; sending alone")
+                current_batch = [text]
+                current_tokens = text_tokens
+                _flush_batch()
+                continue
+            current_batch.append(text)
+            current_tokens += text_tokens
+
+        _flush_batch()
 
         return all_embeddings
 

@@ -10,7 +10,7 @@ API_BASE_URL = "http://localhost:8000"
 REPO_ID = "test_repo"
 REPOS_DIR = Path("/workspace/myrepo")
 REPO_PATH = REPOS_DIR / REPO_ID
-STATE_FILE = Path("index_state.json")
+STATE_FILE = Path(os.getenv("STATE_FILE", "index_state.json"))
 BRANCH = "head"
 
 # --- 유틸리티 함수 ---

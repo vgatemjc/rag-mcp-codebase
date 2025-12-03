@@ -16,6 +16,8 @@ server/__pycache__
 server/models/__pycache__/
 server/routers/__pycache__/
 server/services/__pycache__/
+server/services/edges/__pycache__/
+**/__pycache__/
 
 # 만약 루트에 특정 파일도 포함하고 싶다면:
 !/.env.example

@@ -22,6 +22,7 @@ services:
       DIM: "${DIM:-0}"
       PYTHONPATH: "/app:/workspace/myrepo"
       ALLOW_DATA_RESET: "${ALLOW_DATA_RESET:-0}"
+      STATE_FILE: "/workspace/myrepo/index_state.json"
       HOST_REPO_PATH: "/workspace/myrepo"
       QDRANT_STORAGE_PATH: "/workspace/myrepo/rag-db"
     volumes:
