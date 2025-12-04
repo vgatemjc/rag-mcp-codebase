@@ -64,11 +64,12 @@ services:
       - VLLM_ENFORCE_EAGER=true
       - PYTORCH_ROCM_ARCH=gfx1100
       - VLLM_USE_TRITON_FLASH_ATTN=0
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
     entrypoint: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
     command: >-
-      --model ${VLLM_MODEL_ID:-BAAI/bge-small-en-v1.5}
+      --model ${VLLM_MODEL_ID:-intfloat/e5-base-v2}
       --dtype ${VLLM_DTYPE:-float16}
-      --max-model-len ${VLLM_MAX_LEN:-512}
+      --max-model-len ${VLLM_MAX_LEN:-2048}
       --max-num-seqs ${VLLM_MAX_SEQS:-64}
       --port ${VLLM_PORT:-8003}
     volumes:

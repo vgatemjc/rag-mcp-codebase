@@ -6,8 +6,9 @@ import ast
 import json
 import hashlib
 import subprocess
+import math
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Dict, Any, Protocol, TYPE_CHECKING
+from typing import List, Tuple, Optional, Dict, Any, Protocol, TYPE_CHECKING, Sequence
 import uuid
 from openai import OpenAI
 import tiktoken
@@ -73,6 +74,33 @@ def _is_probably_binary(data: bytes, sample_size: int = 8000, control_threshold:
     allowed_ctrl = {9, 10, 13}  # tab, newline, carriage return
     control_bytes = sum(1 for b in sample if b < 32 and b not in allowed_ctrl)
     return (control_bytes / max(1, len(sample))) > control_threshold
+
+
+def _normalize_vector(vec: Sequence[Any]) -> List[float]:
+    """Coerce embedding output to a plain list of floats; scrub NaN/inf to keep Qdrant happy."""
+    try:
+        flat = list(vec)
+    except Exception as exc:
+        raise ValueError("Embedding vector is not iterable") from exc
+    if not flat:
+        raise ValueError("Embedding vector is empty")
+    if isinstance(flat[0], (list, tuple)):
+        raise ValueError("Embedding vector is nested; expected a 1-D list")
+    try:
+        floats = [float(v) for v in flat]
+    except Exception as exc:
+        raise ValueError("Embedding vector contains non-numeric values") from exc
+    non_finite = 0
+    cleaned: List[float] = []
+    for v in floats:
+        if math.isfinite(v):
+            cleaned.append(v)
+        else:
+            non_finite += 1
+            cleaned.append(0.0)
+    if non_finite:
+        logger.warning("Embedding vector contained %d non-finite values; replaced with 0.0", non_finite)
+    return cleaned
 
 # ----------------------- utils -----------------------
 def sha256(data: bytes) -> str:
@@ -197,7 +225,7 @@ class Embeddings:
                     input=current_batch,
                     model=self.model
                 )
-                batch_embeddings = [item.embedding for item in response.data]
+                batch_embeddings = [_normalize_vector(item.embedding) for item in response.data]
                 all_embeddings.extend(batch_embeddings)
             except Exception as e:  # Catch OpenAI SDK errors (e.g., APIError, Timeout)
                 logger.error("Error during embedding request for batch of %d texts: %s", len(current_batch), e)
@@ -249,13 +277,22 @@ class VectorStore:
     def upsert_points(self, points: List[PointStruct], batch_size: int = QDRANT_UPSERT_BATCH):
         batch = max(1, batch_size)
         for i in range(0, len(points), batch):
-            self.client.upsert(collection_name=self.collection, points=points[i:i + batch])
+            normalized_batch = [
+                PointStruct(
+                    id=p.id,
+                    vector=_normalize_vector(getattr(p, "vector", [])),
+                    payload=p.payload,
+                )
+                for p in points[i:i + batch]
+            ]
+            self.client.upsert(collection_name=self.collection, points=normalized_batch)
 
     def set_payload(self, point_ids: List[str], payload: Dict[str, Any]):
         self.client.set_payload(collection_name=self.collection, payload=payload, points=point_ids)
 
     def search(self, query_vector: List[float], k: int = 5, filt: Optional[Filter] = None):
-        return self.client.search(collection_name=self.collection, query_vector=query_vector, limit=k, query_filter=filt)
+        normalized = _normalize_vector(query_vector)
+        return self.client.search(collection_name=self.collection, query_vector=normalized, limit=k, query_filter=filt)
 
     def scroll_by_logical(self, logical_id: str, is_latest: Optional[bool] = None) -> List[Dict[str, Any]]:
         must = [FieldCondition(key="logical_id", match=MatchValue(value=logical_id))]
