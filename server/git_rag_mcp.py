@@ -10,6 +10,8 @@ import sys, logging
 import pathlib
 import asyncio
 import re
+import subprocess
+from typing import Any, Dict, List, Optional
 
 # CHANGED: repo2md_ts 모듈을 직접 임포트하여 function call 방식으로 사용합니다.
 #         (프로세스 호출이 아님)
@@ -52,6 +54,83 @@ logger.info(f"Loaded FastMCP Version: {MCP_VERSION}")
 mcp = FastMCP("rag-mcp")
 
 logger.info(dir(mcp))
+
+# ----------------------
+# Helpers
+# ----------------------
+
+
+def _resolve_repo_id(repo_id: Optional[str]) -> str:
+    if repo_id:
+        return repo_id
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        top_level = result.stdout.strip()
+        if not top_level:
+            raise ValueError("git rev-parse returned empty path")
+        return pathlib.Path(top_level).name
+    except Exception as exc:
+        raise ValueError("Unable to determine repo_id from git; provide repo_id explicitly") from exc
+
+
+def _format_progress_event(event: Dict[str, Any]) -> str:
+    parts = []
+    status = event.get("status")
+    message = event.get("message")
+    processed = event.get("processed_files")
+    total = event.get("total_files")
+    current_file = event.get("file") or event.get("current_file")
+    commit = event.get("last_commit")
+
+    if status:
+        parts.append(f"[{status}]")
+    if message:
+        parts.append(message)
+    if processed is not None and total is not None:
+        parts.append(f"{processed}/{total}")
+    if current_file:
+        parts.append(f"file={current_file}")
+    if commit:
+        parts.append(f"commit={commit}")
+    return " ".join(parts) or json.dumps(event)
+
+
+async def _stream_index(url: str, stack_type: Optional[str]) -> TextContent:
+    logger.info("streaming index url=%s stack_type=%s", url, stack_type)
+    params = {"stack_type": stack_type} if stack_type else None
+    lines: List[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=None) as client:
+            resp = await client.post(url, params=params)
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    lines.append(_format_progress_event(event))
+                except json.JSONDecodeError:
+                    lines.append(line)
+        return TextContent(type="text", text="\n".join(lines))
+    except Exception as exc:
+        logger.exception("Index stream failed")
+        return TextContent(type="text", text=f"Error: {exc}")
+
+
+async def _get_json(url: str) -> Any:
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _format_json(payload: Any) -> TextContent:
+    return TextContent(type="text", text=json.dumps(payload, ensure_ascii=False, indent=2))
 
 # ----------------------
 # MCP 도구 정의
@@ -405,6 +484,110 @@ async def analyze_issue(question: str, repo: str | None = None, k: int = 16):
         return TextContent(type="text", text=json.dumps(items, ensure_ascii=False, indent=2))
     except Exception as e:
         return TextContent(type="text", text=f"Error: {str(e)}")
+
+
+@mcp.tool()
+async def registry_status(repo_id: str | None = None):
+    """
+    Fetch registry metadata and index status for a repository.
+    Falls back to the current git repo name when repo_id is omitted.
+    """
+    try:
+        resolved_id = _resolve_repo_id(repo_id)
+    except ValueError as exc:
+        return TextContent(type="text", text=f"Error: {exc}")
+
+    try:
+        registry = await _get_json(f"{RAG_URL}/registry/{resolved_id}")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return TextContent(type="text", text=f"Repository '{resolved_id}' is not registered.")
+        return TextContent(type="text", text=f"Error fetching registry: {exc}")
+    except Exception as exc:
+        return TextContent(type="text", text=f"Error fetching registry: {exc}")
+
+    try:
+        status = await _get_json(f"{RAG_URL}/repos/{resolved_id}/index/status")
+    except Exception as exc:
+        return TextContent(type="text", text=f"Error fetching index status: {exc}")
+
+    return _format_json(
+        {
+            "repo_id": resolved_id,
+            "registry": registry,
+            "index_status": status,
+        }
+    )
+
+
+@mcp.tool()
+async def registry_register(
+    repo_id: str | None = None,
+    name: str | None = None,
+    collection_name: str | None = None,
+    embedding_model: str | None = None,
+    stack_type: str | None = None,
+):
+    """
+    Create or update a registry entry for a repository and return the stored record.
+    Defaults to the current git repo name when repo_id is omitted.
+    """
+    try:
+        resolved_id = _resolve_repo_id(repo_id)
+    except ValueError as exc:
+        return TextContent(type="text", text=f"Error: {exc}")
+
+    payload = {
+        "repo_id": resolved_id,
+        "name": name or resolved_id,
+        "collection_name": collection_name,
+        "embedding_model": embedding_model,
+        "stack_type": stack_type,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{RAG_URL}/registry", json=payload)
+            resp.raise_for_status()
+            return _format_json(resp.json())
+    except Exception as exc:
+        logger.exception("registry_register failed")
+        return TextContent(type="text", text=f"Error: {exc}")
+
+
+@mcp.tool()
+async def index_full(repo_id: str | None = None, stack_type: str | None = None):
+    """
+    Trigger a full reindex for the repository and stream progress.
+    """
+    try:
+        resolved_id = _resolve_repo_id(repo_id)
+    except ValueError as exc:
+        return TextContent(type="text", text=f"Error: {exc}")
+    url = f"{RAG_URL}/repos/{resolved_id}/index/full"
+    return await _stream_index(url, stack_type)
+
+
+@mcp.tool()
+async def index_update(repo_id: str | None = None, stack_type: str | None = None):
+    """
+    Trigger an incremental index (commit diff or working tree) and stream progress.
+    """
+    try:
+        resolved_id = _resolve_repo_id(repo_id)
+    except ValueError as exc:
+        return TextContent(type="text", text=f"Error: {exc}")
+    url = f"{RAG_URL}/repos/{resolved_id}/index/update"
+    return await _stream_index(url, stack_type)
+
+
+@mcp.tool()
+async def index_working_tree(repo_id: str | None = None, stack_type: str | None = None):
+    """
+    Alias for incremental indexing focused on working tree changes; uses the update endpoint.
+    """
+    return await index_update(repo_id=repo_id, stack_type=stack_type)
 
 # CHANGED: repo_tree_md를 repo_id 기반으로 사용하도록 변경
 @mcp.tool()
